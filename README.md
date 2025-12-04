@@ -1,5 +1,4 @@
-# DASH
-&lt; DATA / AI SHELL >
+# &lt; DATA / AI SHELL > || DASH
 
 - Is still in planning and researching stage
 
