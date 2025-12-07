@@ -17,6 +17,9 @@
 - generate boilerplates/basecode on demand (based on context, new project? need db config?)
 
 ## User stories
-- AS an user, i want my terminal setup be the same way no matter the place
+- AS an user, i want my terminal toolset be the same no matter the place, easy setup
 
 ## MVP
+- Core
+- Python extensions
+- 1 simple feature for testing the wrapper, ls possibly
