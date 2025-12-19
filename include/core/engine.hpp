@@ -16,6 +16,7 @@ namespace dash::core {
     private:
         PTYSession pty_;
         std::atomic<bool> running_;
+        std::atomic<bool> at_line_start_{true};
 
         // The background thread that reads from Bash -> Screen
         void forward_shell_output();

@@ -1,5 +1,6 @@
 #include "core/engine.hpp"
 #include <print>
+#include <cstring> // for std::strlen
 #include <thread>
 #include <array>
 #include <iostream>
@@ -24,7 +25,7 @@ namespace dash::core {
 
         running_ = true;
         // \r\n is needed because RAW mode
-        std::print("[DASH] Started. Type ':quit' or ':exit' to exit.\r\n");
+        std::print("<DASH> has been started. Type ':quit' or ':exit' to exit.\r\n");
 
         std::thread output_thread(&Engine::forward_shell_output, this);
 
@@ -35,37 +36,53 @@ namespace dash::core {
         // Wait for child to exit gracefully
         waitpid(pty_.get_child_pid(), nullptr, 0);
         pty_.stop();
-        std::print("\r\n[DASH] Session ended.\n");
+        std::print("\r\n<DASH> Session ended.\n");
     }
 
-    void Engine::forward_shell_output() {
-        std::array<char, BUFFER_SIZE> buffer;
-        struct pollfd pfd{};
-        pfd.fd = pty_.get_master_fd();
-        pfd.events = POLLIN;
+void Engine::forward_shell_output() {
+    std::array<char, BUFFER_SIZE> buffer;
+    struct pollfd pfd{};
+    pfd.fd = pty_.get_master_fd();
+    pfd.events = POLLIN;
 
-        while (running_) {
-            int ret = poll(&pfd, 1, 100); // 100ms timeout
+    while (running_) {
+        int ret = poll(&pfd, 1, 100);
+        if (ret <= 0) continue;
 
-            if (ret < 0) break; 
-            if (ret == 0) continue;
+        if (pfd.revents & (POLLERR | POLLHUP)) {
+            running_ = false;
+            break;
+        }
 
-            if (pfd.revents & (POLLERR | POLLHUP)) {
-                running_ = false;
-                break;
-            }
+        if (pfd.revents & POLLIN) {
+            ssize_t bytes_read = read(
+                pty_.get_master_fd(),
+                buffer.data(),
+                buffer.size()
+            );
 
-            if (pfd.revents & POLLIN) {
-                ssize_t bytes_read = read(pty_.get_master_fd(), buffer.data(), buffer.size());
-                if (bytes_read <= 0) break;
+            if (bytes_read <= 0) break;
 
-                // TODO: Data Interception happens here (Data detection)
-                
-                // Write to standard out
-                write(STDOUT_FILENO, buffer.data(), bytes_read);
+            for (ssize_t i = 0; i < bytes_read; ++i) {
+                char c = buffer[i];
+
+                if (at_line_start_) {
+                    if (c != '\n' && c != '\r') {
+                        const char* dash = "[\x1b[95m-\x1b[0m] ";
+                        write(STDOUT_FILENO, dash, std::strlen(dash));
+                        at_line_start_ = false;
+                    }
+                }
+
+                write(STDOUT_FILENO, &c, 1);
+
+                if (c == '\n' || c == '\r') {
+                    at_line_start_ = true;
+                }
             }
         }
     }
+}
 
     void Engine::process_user_input() {
         // In RAW mode, we read char by char, but for this prototype,
@@ -79,7 +96,7 @@ namespace dash::core {
         pfd.fd = STDIN_FILENO;
         pfd.events = POLLIN;
 
-        std::string cmd_accumulator; 
+        std::string cmd_accumulator;
 
         while (running_) {
             int ret = poll(&pfd, 1, -1);
