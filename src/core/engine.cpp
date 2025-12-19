@@ -34,6 +34,7 @@ namespace dash::core {
         
         // Wait for child to exit gracefully
         waitpid(pty_.get_child_pid(), nullptr, 0);
+        pty_.stop();
         std::print("\r\n[DASH] Session ended.\n");
     }
 
@@ -101,6 +102,7 @@ namespace dash::core {
                         // Check if the accumulated string matches our command
                         if (cmd_accumulator == ":quit" || cmd_accumulator == ":exit") {
                             running_ = false;
+                            kill(pty_.get_child_pid(), SIGHUP);
                         }
                         // Clear buffer for the next command
                         cmd_accumulator.clear();
