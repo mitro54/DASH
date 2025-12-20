@@ -10,6 +10,7 @@
 - ls shows 'foldername (git?) (env?) (size, rows, cols)'
 - running it in any new environment sets up all the same tools ready to use (or equivalents if not available).
 - allow auto-save to git (needs some user setup)
+- add possibility for a config file so users could choose settings on/off etc
 
 ## Feature ideas (if AI enabled)
 - Suggest fixes to bad commands
@@ -22,4 +23,5 @@
 ## MVP
 - Core
 - Python extensions
+- config file
 - 1 simple feature for testing the wrapper, ls possibly
