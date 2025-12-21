@@ -10,7 +10,8 @@
 - ls shows 'foldername (git?) (env?) (size, rows, cols)'
 - running it in any new environment sets up all the same tools ready to use (or equivalents if not available).
 - allow auto-save to git (needs some user setup)
-- add possibility for a config file so users could choose settings on/off etc
+- add possibility for a config file so users could choose settings on/off etc || OK
+- should be able to modify settings from the shell itself, needs a command for it
 
 ## Feature ideas (if AI enabled)
 - Suggest fixes to bad commands
@@ -21,7 +22,7 @@
 - AS an user, i want my terminal toolset be the same no matter the place, easy setup
 
 ## MVP
-- Core
-- Python extensions
-- config file
+- Core || OK ish
+- Python extensions || OK
+- config file || OK
 - 1 simple feature for testing the wrapper, ls possibly
