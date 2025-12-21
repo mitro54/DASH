@@ -74,7 +74,7 @@ namespace dash::core {
 
             // list all the possible settings here in the same way, if hasattr conf module "SETTING_NAME"...
 
-            
+
         } catch (const std::exception& e) {
             // if config.py doesnt exist, we just stay with the defaults
             std::print("[91m-\x1b[0m] No config.py found (or error reading it). Using defaults.\n");
@@ -155,9 +155,12 @@ void Engine::forward_shell_output() {
 
                 if (at_line_start_) {
                     if (c != '\n' && c != '\r') {
+                        // check the config
+                        if (config_.show_logo) {
                         const char* dash = "[\x1b[95m-\x1b[0m] ";
                         write(STDOUT_FILENO, dash, std::strlen(dash));
                         at_line_start_ = false;
+                        }
                     }
                 }
                 write(STDOUT_FILENO, &c, 1);
