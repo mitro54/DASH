@@ -21,14 +21,8 @@ PYBIND11_EMBEDDED_MODULE(dash, m) {
 namespace dash::core {
 
     constexpr size_t BUFFER_SIZE = 4096;
-
     Engine::Engine() : running_(false) {}
-
-    Engine::~Engine() {
-        if (running_) {
-            kill(pty_.get_child_pid(), SIGTERM);
-        }
-    }
+    Engine::~Engine() { if (running_) kill(pty_.get_child_pid(), SIGTERM); }
 
     void Engine::load_extensions(const std::string& path) {
         namespace fs = std::filesystem;
@@ -47,8 +41,8 @@ namespace dash::core {
             for (const auto& entry : fs::directory_iterator(path)) {
                 if (entry.path().extension() == ".py") {
                     std::string module_name = entry.path().stem().string();
-
-                    if (module_name == "__init__") continue;
+                    // skip __init__ and config
+                    if (module_name == "__init__" || module_name == "config") continue;
                     // Import the file as a module
                     py::module_ plugin = py::module_::import(module_name.c_str());
                     loaded_plugins_.push_back(plugin);
@@ -58,6 +52,34 @@ namespace dash::core {
             }
         } catch (const std::exception& e) {
             std::print(stderr, "[\x1b[91m-\x1b[0m] Error, failed to load extensions: {}\n", e.what());
+        }
+    }
+
+    void Engine::load_configuration(const std::string& path) {
+        namespace fs = std::filesystem;
+        fs::path p(path);
+        try {
+            py::module_ sys = py::module_::import("sys");
+            sys.attr("path").attr("append")(fs::absolute(p).string());
+            py::module_ conf_module = py::module_::import("config");
+
+            // SETTINGS
+
+            // SHOW_LOGO
+            if (py::hasattr(conf_module, "SHOW_LOGO")) {
+                config_.show_logo = conf_module.attr("SHOW_LOGO").cast<bool>();
+
+                // later modify this to only print if something has changed, or on demand (command for it)
+                if (config_.show_logo) std::print("[\x1b[92m-\x1b[0m] SHOW_LOGO = {}\n", config_.show_logo);
+                else std::print("[\x1b[91m-\x1b[0m] SHOW_LOGO = {}\n", config_.show_logo);
+            }
+
+            // list all the possible settings here in the same way, if hasattr conf module "SETTING_NAME"...
+
+
+        } catch (const std::exception& e) {
+            // if config.py doesnt exist, we just stay with the defaults
+            std::print("[91m-\x1b[0m] No config.py found (or error reading it). Using defaults.\n");
         }
     }
 
@@ -135,9 +157,12 @@ void Engine::forward_shell_output() {
 
                 if (at_line_start_) {
                     if (c != '\n' && c != '\r') {
+                        // check the config
+                        if (config_.show_logo) {
                         const char* dash = "[\x1b[95m-\x1b[0m] ";
                         write(STDOUT_FILENO, dash, std::strlen(dash));
                         at_line_start_ = false;
+                        }
                     }
                 }
                 write(STDOUT_FILENO, &c, 1);
