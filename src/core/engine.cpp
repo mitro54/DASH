@@ -3,6 +3,10 @@
 #include <cstring> // for std::strlen
 #include <thread>
 #include <array>
+#include <vector>
+#include <string>
+#include <string_view>
+#include <sstream>
 #include <iostream>
 #include <poll.h>
 #include <csignal>
@@ -238,9 +242,10 @@ void Engine::forward_shell_output() {
     }
 
     std::string Engine::process_output(std::string_view raw_output) {
-        // for example a simple text replacement
         std::string s(raw_output);
-        size_t pos = 0;
+        std::stringstream ss(s);
+        std::string filename;
+        std::vector<std::string> filename_storage;
 
         // 'ls' command functionality: (should probably also be configurable later)
         // function that splits all the s string filenames in a vector/arr based on ' '
@@ -252,27 +257,19 @@ void Engine::forward_shell_output() {
         // thinking of moving the functions to a separate file as this gets quite large QUICKLY,
         // if plenty of input commands has their own different functionalities
 
-        // -----will modify this snippet to work with this idea on better time-----
-        // int start = 0, end, word_finder;
-        // std::string sentence, word;
-        // std::cout << "Input sentence: ";
-        // std::getline(std::cin, sentence);
-
-        // while ((end = sentence.find(' ', start)) != std::string::npos) {
-        //         word = sentence.substr(start, end - start);
-        //         word_finder = sentence.find(word, end);
-        //         if (sentence.find(word, end) != std::string::npos)
-        //             sentence.erase(word_finder, word_finder - start);
-        //         start = end + 1;
-        //     }
-        // -------------------------------------------------------------------------
-
-        // modify the loop for some actual purpose later
-        while ((pos = s.find("src", pos)) != std::string::npos) {
-            s.replace(pos, 3, "src<TEST>");
-            pos += 13; // move past replacement
+        // still needs a lot of work with the formatting etc, but works for a quick proto
+        while (std::getline(ss, filename, ' ')) {
+            if (!filename.empty())
+                filename_storage.push_back(filename);
         }
 
-        return s;
+        std::string final_output = "";
+        for (const auto& file : filename_storage) {
+            std::string processed_name = "<" + file + ">";
+            if (!final_output.empty())
+                final_output += " ";
+            final_output += processed_name;
+        }
+        return final_output;
     }
 }
