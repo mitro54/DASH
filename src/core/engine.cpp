@@ -129,12 +129,15 @@ namespace dash::core {
         pfd.fd = pty_.get_master_fd();
         pfd.events = POLLIN;
 
-        while (running_) {
+        while (true) {
             int ret = poll(&pfd, 1, 100);
-            if (ret <= 0) continue;
+            if (ret < 0) break;
+            if (ret == 0) {
+                if (!running_) continue;
+                continue;
+            }
 
             if (pfd.revents & (POLLERR | POLLHUP)) {
-                running_ = false;
                 break;
             }
 
@@ -219,6 +222,7 @@ namespace dash::core {
                         if (cmd_accumulator == ":q" || cmd_accumulator == ":exit") {
                             running_ = false;
                             kill(pty_.get_child_pid(), SIGHUP);
+                            return;
                         }
 
                         // 3. Track 'cd' to keep shell_cwd_ in sync

@@ -43,8 +43,11 @@ namespace dash::core {
             const char* shell = std::getenv("SHELL");
             if (!shell) shell = "/bin/bash";
 
+            // Disable Apple's session saving scripts which can cause the "Saving session..." hang.
+            setenv("SHELL_SESSION_HISTORY", "0", 1);
+
             // Replace process with shell
-            execlp(shell, shell, "-i", nullptr);
+            execlp(shell, shell, "-i", "-l", nullptr);
             
             // If we get here, it failed
             std::println(stderr, "Error: Failed to launch shell {}", shell);
