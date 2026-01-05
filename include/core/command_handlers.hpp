@@ -157,7 +157,7 @@ namespace dais::core::handlers {
                 continue;
             }
             // Resolve Path & Analyze
-            std::filesystem::path full_path = cwd / clean_name
+            std::filesystem::path full_path = cwd / clean_name;
             auto stats = dais::utils::analyze_path(full_path.string());
 
             std::string display;
