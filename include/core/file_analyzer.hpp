@@ -8,7 +8,7 @@
 #include <vector>
 #include <cstdint>
 
-namespace dash::utils {
+namespace dais::utils {
     namespace fs = std::filesystem;
 
     /**

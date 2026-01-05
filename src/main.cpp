@@ -6,11 +6,11 @@
 namespace fs = std::filesystem;
 
 int main() {
-    dash::core::Engine engine;
+    dais::core::Engine engine;
 
     // Get the baked-in absolute path to the project root
-    // This allows you to alias dash='.../build/DASH' and run it from anywhere.
-    fs::path project_root = DASH_ROOT;
+    // This allows you to alias dais='.../build/DAIS' and run it from anywhere.
+    fs::path project_root = DAIS_ROOT;
     
     // Construct the path to the scripts folder
     fs::path scripts_path = project_root / "src" / "py_scripts";

@@ -21,7 +21,7 @@
 #include <pty.h>
 #endif
 
-namespace dash::core {
+namespace dais::core {
 
     PTYSession::PTYSession() : master_fd_(-1), child_pid_(-1) {}
 

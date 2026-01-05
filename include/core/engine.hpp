@@ -10,7 +10,7 @@
 
 namespace py = pybind11;
 
-namespace dash::core {
+namespace dais::core {
 
     struct Config {
         bool show_logo = true;

@@ -5,7 +5,7 @@
 #include <sys/ioctl.h>
 #include <cstdint>
 
-namespace dash::core {
+namespace dais::core {
 
     class PTYSession {
     public:

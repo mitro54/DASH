@@ -12,7 +12,7 @@
 #include <unistd.h>
 #include <cctype> 
 
-namespace dash::core::handlers {
+namespace dais::core::handlers {
 
     // ==================================================================================
     // THEME CONFIGURATION
@@ -157,8 +157,8 @@ namespace dash::core::handlers {
                 continue;
             }
             // Resolve Path & Analyze
-            std::filesystem::path full_path = cwd / clean_name;
-            auto stats = dash::utils::analyze_path(full_path.string());
+            std::filesystem::path full_path = cwd / clean_name
+            auto stats = dais::utils::analyze_path(full_path.string());
 
             std::string display;
 

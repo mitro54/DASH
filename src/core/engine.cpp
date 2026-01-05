@@ -1,6 +1,6 @@
 /**
  * @file engine.cpp
- * @brief Core implementation of the DASH runtime engine.
+ * @brief Core implementation of the DAIS runtime engine.
  * * This file contains the main logic for:
  * 1. Managing the Pseudoterminal (PTY) session.
  * 2. Bi-directional I/O forwarding (User <-> Shell).
@@ -36,18 +36,18 @@
 // EMBEDDED MODULE DEFINITION
 // ==================================================================================
 /**
- * @brief Defines the 'dash' Python module available to scripts.
+ * @brief Defines the 'dais' Python module available to scripts.
  * Allows Python extensions to communicate back to the C++ core.
  */
-PYBIND11_EMBEDDED_MODULE(dash, m) {
-    // Expose a print function so Python can write formatted logs to the DASH shell
+PYBIND11_EMBEDDED_MODULE(dais, m) {
+    // Expose a print function so Python can write formatted logs to the DAIS shell
     m.def("log", [](std::string msg) {
         // Replaced std::print with std::cout
         std::cout << "\r\n[\x1b[92m-\x1b[0m]: " << msg << "\r\n" << std::flush;
     });
 }
 
-namespace dash::core {
+namespace dais::core {
 
     constexpr size_t BUFFER_SIZE = 4096;
     std::atomic<bool> running_{false};
@@ -199,7 +199,7 @@ namespace dash::core {
 
         running_ = true;
         // \r\n is needed because terminal is in RAW mode
-        std::cout << "<DASH> has been started. Type ':q' or ':exit' to exit.\r\n" << std::flush;
+        std::cout << "<DAIS> has been started. Type ':q' or ':exit' to exit.\r\n" << std::flush;
 
         // Spawn the output reader thread (Child -> Screen)
         std::thread output_thread(&Engine::forward_shell_output, this);
@@ -212,7 +212,7 @@ namespace dash::core {
         
         waitpid(pty_.get_child_pid(), nullptr, 0);
         pty_.stop();
-        std::cout << "\r\n<DASH> Session ended.\n" << std::flush;
+        std::cout << "\r\n<DAIS> Session ended.\n" << std::flush;
     }
 
     /**
@@ -276,8 +276,8 @@ namespace dash::core {
                         if (at_line_start_) {
                             if (c != '\n' && c != '\r') {
                                 if (config_.show_logo) {
-                                    const char* dash = "[\x1b[95m-\x1b[0m] ";
-                                    write(STDOUT_FILENO, dash, std::strlen(dash));
+                                    const char* dais = "[\x1b[95m-\x1b[0m] ";
+                                    write(STDOUT_FILENO, dais, std::strlen(dais));
                                     at_line_start_ = false;
                                 }
                             }

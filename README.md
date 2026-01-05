@@ -1,10 +1,10 @@
 # &lt; DATA / AI SHELL >
-## ... [<span style="color:#ff00ff">-</span>] DASH
+## ... [<span style="color:#ff00ff">-</span>] DAIS
 
 - In researching / early development stage
 
 ## What
-- DASH is a PTY (pseudoterminal) shell wrapper. 
+- DAIS is a PTY (pseudoterminal) shell wrapper. 
 - Core will be written in C++, that will support Python scripts as extensions to the core. 
 
 ## Scope
@@ -25,8 +25,8 @@ Why not, terminals should be smarter
 - `brew install cmake python`
 
 ### 2. Clone the repo and cd in to it
-- `git clone https://github.com/mitro54/DASH.git`
-- `cd DASH`
+- `git clone https://github.com/mitro54/DAIS.git`
+- `cd DAIS`
 
 ### 3. Create a build folder and cd in to it
 - `mkdir build`
@@ -36,8 +36,8 @@ Why not, terminals should be smarter
 - `cmake ..` or `cmake -DCMAKE_CXX_COMPILER=g++-13 ..` to make sure it uses at least GCC 13 for C++20 (Linux)
 - `make`
 
-### 4.1 (Optional) Install the DASH command system-wide
-`sudo make install`, this allows you to run this project with `DASH` from anywhere in terminal!
+### 4.1 (Optional) Install the DAIS command system-wide
+`sudo make install`, this allows you to run this project with `DAIS` from anywhere in terminal!
 
 ### 5. Run it (if you did not do 4.1)
-`./DASH`
+`./DAIS`
