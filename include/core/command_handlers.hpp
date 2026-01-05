@@ -13,9 +13,14 @@
 
 namespace dash::core::handlers {
 
-    // --- COLORS ---
-    constexpr auto C_GRAY  = "\x1b[90m";  
-    constexpr auto C_RESET = "\x1b[0m";
+    // --- THEME CONFIGURATION ---
+    struct Theme {
+        static constexpr auto RESET     = "\x1b[0m";
+        static constexpr auto STRUCTURE = "\x1b[38;5;240m"; // Dark Gray (Borders, Parens)
+        static constexpr auto UNIT      = "\x1b[38;5;109m"; // Sage Blue (KB, MB, DIR)
+        static constexpr auto VALUE     = "\x1b[0m";        // Default White (Numbers)
+        static constexpr auto ESTIMATE  = "\x1b[38;5;139m"; // Muted Purple (~)
+    };
 
     // --- HELPERS ---
 
@@ -54,6 +59,25 @@ namespace dash::core::handlers {
         return result;
     }
 
+    // --- FORMATTERS ---
+    
+    inline std::string fmt_size(uintmax_t bytes) {
+        if (bytes < 1024) 
+            return std::format("{}{}{}{}", Theme::VALUE, bytes, Theme::UNIT, "B");
+        if (bytes < 1024 * 1024) 
+            return std::format("{}{:.1f}{}{}", Theme::VALUE, bytes/1024.0, Theme::UNIT, "KB");
+        return std::format("{}{:.1f}{}{}", Theme::VALUE, bytes/(1024.0*1024.0), Theme::UNIT, "MB");
+    }
+
+    inline std::string fmt_rows(size_t rows, bool estimated) {
+        std::string tilde = estimated ? std::string(Theme::ESTIMATE) + "~" : "";
+        if (rows > 1000000) 
+            return std::format("{}{}{:.1f}{}{}", tilde, Theme::VALUE, rows/1000000.0, Theme::UNIT, "M R");
+        if (rows > 1000) 
+            return std::format("{}{}{:.1f}{}{}", tilde, Theme::VALUE, rows/1000.0, Theme::UNIT, "k R");
+        return std::format("{}{}{}{}{}", tilde, Theme::VALUE, rows, Theme::UNIT, "R");
+    }
+
     // --- HANDLERS ---
 
     inline std::string handle_generic(std::string_view raw_output) {
@@ -65,10 +89,7 @@ namespace dash::core::handlers {
         std::string token;
         std::vector<std::string> original_items;
         
-        while (ss >> token) {
-            original_items.push_back(token);
-        }
-
+        while (ss >> token) original_items.push_back(token);
         if (original_items.empty()) return "";
 
         struct GridItem {
@@ -76,43 +97,73 @@ namespace dash::core::handlers {
             size_t visible_len;
         };
         std::vector<GridItem> grid_items;
-
         bool first_token = true;
 
         for (const auto& item_raw : original_items) {
             std::string clean_name = strip_ansi(item_raw);
             
-            if (first_token && clean_name == "ls") {
-                first_token = false;
-                continue;
-            }
+            if (first_token && clean_name == "ls") { first_token = false; continue; }
             first_token = false;
-
-            if (clean_name.empty()) continue;
-            if (clean_name == "." || clean_name == "..") continue;
+            if (clean_name.empty() || clean_name == "." || clean_name == "..") continue;
 
             std::filesystem::path full_path = cwd / clean_name;
             auto stats = dash::utils::analyze_path(full_path.string());
 
-            std::string final_str;
-            if (!stats.info_string.empty()) {
-                final_str = std::format("{} ({})", item_raw, stats.info_string);
+            std::string display;
+
+            if (stats.is_valid) {
+                if (stats.is_dir) {
+                    // DIRECTORY: "Name (DIR: 5 items)"
+                    // Fixed: Literal ')' is now embedded in format string after the color code
+                    display = std::format("{} {}({}{}: {}{} {}{}{})", 
+                        item_raw, 
+                        Theme::STRUCTURE, // Color for '('
+                        Theme::UNIT, "DIR", 
+                        Theme::VALUE, stats.item_count, 
+                        Theme::UNIT, "items", 
+                        Theme::STRUCTURE // Color for ')'
+                    ); 
+                } else {
+                    // FILE: "Name (10KB, 50R, 80C)"
+                    std::string info;
+                    std::string size_str = fmt_size(stats.size_bytes);
+
+                    if (stats.is_text) {
+                        std::string row_str = fmt_rows(stats.rows, stats.is_estimated);
+                        info = std::format("{}{}, {}{}, {}{}{}{}", 
+                            size_str, 
+                            Theme::STRUCTURE, 
+                            row_str,
+                            Theme::STRUCTURE,
+                            Theme::VALUE, stats.max_cols, Theme::UNIT, "C");
+                    } else {
+                        info = size_str;
+                    }
+
+                    // Fixed: Literal ')' embedded in format string
+                    display = std::format("{} {}({}{})", 
+                        item_raw, 
+                        Theme::STRUCTURE, // Color for '('
+                        info, 
+                        Theme::STRUCTURE // Color for ')'
+                    );
+                }
             } else {
-                final_str = item_raw;
+                display = item_raw;
             }
 
-            size_t vlen = get_visible_length(final_str);
-            grid_items.push_back({final_str, vlen});
+            display += Theme::RESET;
+            size_t vlen = get_visible_length(display);
+            grid_items.push_back({display, vlen});
         }
 
         if (grid_items.empty()) return "";
 
-        // Safety margin to prevent hard wrapping
         int term_width = get_terminal_width() - 2; 
         if (term_width < 10) term_width = 10; 
 
         std::string final_output;
-        final_output.reserve(raw_output.size() * 4);
+        final_output.reserve(raw_output.size() * 5); 
 
         int current_line_len = 0;
 
@@ -122,8 +173,8 @@ namespace dash::core::handlers {
 
             if (current_line_len + gap + cell_len > (size_t)term_width) {
                 if (current_line_len > 0) final_output += "\r\n";
-                
-                final_output += std::format("{}|{} {} {}|{}", C_GRAY, C_RESET, item.display_string, C_GRAY, C_RESET);
+                // Box borders
+                final_output += std::format("{}|{} {} {}|{}", Theme::STRUCTURE, Theme::RESET, item.display_string, Theme::STRUCTURE, Theme::RESET);
                 current_line_len = cell_len;
             } 
             else {
@@ -131,7 +182,7 @@ namespace dash::core::handlers {
                     final_output += " "; 
                     current_line_len += 1;
                 }
-                final_output += std::format("{}|{} {} {}|{}", C_GRAY, C_RESET, item.display_string, C_GRAY, C_RESET);
+                final_output += std::format("{}|{} {} {}|{}", Theme::STRUCTURE, Theme::RESET, item.display_string, Theme::STRUCTURE, Theme::RESET);
                 current_line_len += cell_len;
             }
         }
