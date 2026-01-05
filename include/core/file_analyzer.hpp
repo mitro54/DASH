@@ -83,7 +83,10 @@ namespace dais::utils {
             // Extension-based text detection whitelist
             stats.is_text = (ext == ".txt" || ext == ".cpp" || ext == ".hpp" || 
                              ext == ".py"  || ext == ".md"  || ext == ".cmake" ||
-                             ext == ".json" || ext == ".log" || stats.is_csv);
+                             ext == ".json"|| ext == ".log" || ext == ".sh" ||
+                             ext == ".js"  || ext == ".ts"  || ext == ".html" ||
+                             ext == ".css" || ext == ".xml" || ext == ".yml" || 
+                             ext == ".ini" || ext == ".conf"|| stats.is_csv);
 
             // Optimization: Skip heavy I/O scanning if empty or binary
             if (!stats.is_text || stats.size_bytes == 0) return stats;
