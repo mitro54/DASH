@@ -9,6 +9,10 @@ set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+# Pass the absolute project path to C++ code.
+# This ensures DASH finds 'src/py_scripts' even if you run it via an alias or from another folder.
+add_compile_definitions(DASH_ROOT="${CMAKE_SOURCE_DIR}")
+
 # Fetch pybind11
 FetchContent_Declare(
   pybind11
@@ -18,7 +22,8 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(pybind11)
 
 # Find python
-find_package(Python 3.12 COMPONENTS Interpreter Development REQUIRED)
+# Relaxed version requirement slightly to ensure compatibility if you update Python later
+find_package(Python 3.10 COMPONENTS Interpreter Development REQUIRED)
 
 # THE INGREDIENTS (List every .cpp file you create here)
 add_executable(DASH 
@@ -32,15 +37,12 @@ add_executable(DASH
 target_include_directories(DASH PRIVATE include)
 
 # THE GARNISH (Libraries)
-
-# This does two things:
-# 1. Links the Python C library (libpython) so you can use the interpreter.
-# 2. Sets up the include paths for Python headers.
 target_link_libraries(DASH PRIVATE pybind11::embed)
 
 # Linux-Specific Linking
-# 'util' is required for openpty/forkpty on Linux. 
-# 'pthread' is required for the std::thread we use in Engine.
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_link_libraries(DASH PRIVATE util pthread)
 endif()
+
+# Install the Main Executable
+install(TARGETS DASH DESTINATION bin)

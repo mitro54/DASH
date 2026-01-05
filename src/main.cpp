@@ -1,30 +1,32 @@
 #include "core/engine.hpp"
 #include <filesystem>
 #include <iostream>
-#include <vector>
+#include <string>
 
 namespace fs = std::filesystem;
 
-// Helper function to find the py_scripts folder
-std::string find_plugins_path() {
-    std::vector<std::string> candidates = {
-        "py_scripts",           // If you run from project root
-        "../py_scripts",        // If you run from build/
-        "../../py_scripts",     // If you run from build/debug/
-        "../src/py_scripts",    // look from src
-        //"/usr/local/share/dash/py_scripts" // (Optional) System install path
-    };
-
-    for (const auto& path : candidates)
-        if (fs::exists(path) && fs::is_directory(path)) return path;
-    return ""; // Not found
-}
-
 int main() {
     dash::core::Engine engine;
-    std::string root_path = find_plugins_path();
-    engine.load_configuration(root_path);
-    engine.load_extensions(root_path);
+
+    // Get the baked-in absolute path to the project root
+    // This allows you to alias dash='.../build/DASH' and run it from anywhere.
+    fs::path project_root = DASH_ROOT;
+    
+    // Construct the path to the scripts folder
+    fs::path scripts_path = project_root / "src" / "py_scripts";
+
+    // Verify it exists (Sanity check to prevent Segfaults)
+    if (!fs::exists(scripts_path)) {
+        std::cerr << "Error: Could not find Python scripts at: " << scripts_path << "\n";
+        return 1;
+    }
+
+    std::string path_str = scripts_path.string();
+
+    // 4. Load
+    engine.load_configuration(path_str);
+    engine.load_extensions(path_str);
     engine.run();
+
     return 0;
 }
