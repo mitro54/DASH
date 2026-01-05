@@ -7,11 +7,12 @@
 - changes env automatically to correct one when entering a specific folder...
 - ... or runs the folders content upon entering(safe commands only), saving time setting up...
 - ...could even run on startup on user defined mode (dev, prod, test?), saving time and effort opening things up
-- ls shows 'foldername (git?) (env?) (size, rows, cols)'
+- ls shows 'foldername (git?) (env?) (size, rows, cols)' || v1 OK
 - running it in any new environment sets up all the same tools ready to use (or equivalents if not available).
 - allow auto-save to git (needs some user setup)
 - add possibility for a config file so users could choose settings on/off etc
 - ls could have different styles of formatting on demand
+- referencing 1st user story, the possibility for listing installs easily to the config.py
 
 ## Feature ideas (if AI enabled)
 - Suggest fixes to bad commands
@@ -21,8 +22,8 @@
 ## User stories
 - AS an user, i want my terminal toolset be the same no matter the place, easy setup
 
-## MVP
+## MVP / Proof of Concept
 - Core || OK ish
 - Python extensions || OK
 - config file || OK
-- 1 simple feature for testing the wrapper, ls possibly
+- 1 simple feature for testing the wrapper, ls possibly || OK
