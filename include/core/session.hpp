@@ -22,9 +22,6 @@ namespace dais::core {
         [[nodiscard]] int get_master_fd() const { return master_fd_; }
         [[nodiscard]] pid_t get_child_pid() const { return child_pid_; }
 
-        // Resize the virtual terminal
-        void resize(int rows, int cols);
-
     private:
         int master_fd_;
         pid_t child_pid_;

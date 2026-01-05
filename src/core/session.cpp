@@ -103,20 +103,6 @@ namespace dais::core {
     }
 
     /**
-     * @brief Resizes the virtual window size of the PTY.
-     * This signals the child shell (SIGWINCH) that the terminal dimensions have changed,
-     * allowing it to re-flow text or redraw UI (like top/vim).
-     * * @param rows New number of rows (height).
-     * @param cols New number of columns (width).
-     */
-    void PTYSession::resize(int rows, int cols) {
-        struct winsize ws{};
-        ws.ws_row = static_cast<unsigned short>(rows);
-        ws.ws_col = static_cast<unsigned short>(cols);
-        ioctl(master_fd_, TIOCSWINSZ, &ws);
-    }
-
-    /**
      * @brief Configures the standard input for Raw Mode.
      * * Raw mode disables:
      * - ECHO: Characters typed are not printed immediately (the shell handles echo).
