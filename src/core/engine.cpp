@@ -23,6 +23,7 @@
 #include <filesystem>
 #include <atomic>
 #include <iomanip> // for std::boolalpha
+#include <mutex>
 
 // --- OS Specific Includes for CWD Sync ---
 // We need low-level OS headers to inspect the child process's state directly.
@@ -355,8 +356,13 @@ namespace dais::core {
 
                     // Check for Enter key (\r or \n) indicating command submission
                     if (c == '\r' || c == '\n') {
-                        current_command_ = cmd_accumulator; 
-                        
+                        // --- THREAD SAFETY: LOCK ---
+                        {
+                            std::lock_guard<std::mutex> lock(state_mutex_);
+                            current_command_ = cmd_accumulator; 
+                        }
+                        // ---------------------------
+
                         // 1. Detect 'ls'
                         if (cmd_accumulator == "ls") {
                             // CWD FIX: Sync OS state before running ls logic
@@ -423,9 +429,17 @@ namespace dais::core {
             prompt_payload = raw_output.substr(last_newline);
         }
 
+        // --- THREAD SAFETY: COPY ---
+        std::string cmd_copy;
+        {
+            std::lock_guard<std::mutex> lock(state_mutex_);
+            cmd_copy = current_command_;
+        }
+        // ---------------------------
+
         // Delegate to handler
         std::string processed_content;
-        if (current_command_ == "ls") {
+        if (cmd_copy == "ls") {
             //  - Handlers transform plain list into grid
             processed_content = handlers::handle_ls(content_payload, shell_cwd_);
         } else {

@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 #include <filesystem>
+#include <mutex>
 
 namespace py = pybind11;
 
@@ -32,6 +33,7 @@ namespace dais::core {
 
         // Track the active command string (e.g., "ls", "git status")
         std::string current_command_;
+        std::mutex state_mutex_;
 
         // modifying output
         std::string pending_output_buffer_;
