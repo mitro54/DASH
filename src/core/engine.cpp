@@ -11,18 +11,18 @@
 
 #include "core/engine.hpp"
 #include "core/command_handlers.hpp"
-#include <print>
 #include <cstring> // for std::strlen
 #include <thread>
 #include <array>
 #include <string>
 #include <string_view>
-#include <iostream>
+#include <iostream> // Needed for std::cout, std::cerr
 #include <poll.h>
 #include <csignal>
 #include <sys/wait.h>
 #include <filesystem>
 #include <atomic>
+#include <iomanip> // for std::boolalpha
 
 // --- OS Specific Includes for CWD Sync ---
 // We need low-level OS headers to inspect the child process's state directly.
@@ -42,7 +42,8 @@
 PYBIND11_EMBEDDED_MODULE(dash, m) {
     // Expose a print function so Python can write formatted logs to the DASH shell
     m.def("log", [](std::string msg) {
-        std::print("\r\n[\x1b[92m-\x1b[0m]: {}\r\n", msg);
+        // Replaced std::print with std::cout
+        std::cout << "\r\n[\x1b[92m-\x1b[0m]: " << msg << "\r\n" << std::flush;
     });
 }
 
@@ -72,7 +73,8 @@ namespace dash::core {
         
         // Validation
         if (path.empty() || !fs::exists(p) || !fs::is_directory(p)) {
-            std::print(stderr, "[\x1b[93m-\x1b[0m] Warning: Plugin path '{}' invalid. Skipping Python extensions.\n", path);
+            // Replaced std::print(stderr) with std::cerr
+            std::cerr << "[\x1b[93m-\x1b[0m] Warning: Plugin path '" << path << "' invalid. Skipping Python extensions.\n";
             return;
         }
         std::string abs_path = fs::absolute(p).string();
@@ -94,11 +96,13 @@ namespace dash::core {
                     py::module_ plugin = py::module_::import(module_name.c_str());
                     loaded_plugins_.push_back(plugin);
                     
-                    std::print("[\x1b[92m-\x1b[0m] Loaded .py extension: {}\n", module_name);
+                    // Replaced std::print with std::cout
+                    std::cout << "[\x1b[92m-\x1b[0m] Loaded .py extension: " << module_name << "\n";
                 }
             }
         } catch (const std::exception& e) {
-            std::print(stderr, "[\x1b[91m-\x1b[0m] Error, failed to load extensions: {}\n", e.what());
+            // Replaced std::print(stderr) with std::cerr
+            std::cerr << "[\x1b[91m-\x1b[0m] Error, failed to load extensions: " << e.what() << "\n";
         }
     }
 
@@ -121,12 +125,14 @@ namespace dash::core {
                 config_.show_logo = conf_module.attr("SHOW_LOGO").cast<bool>();
 
                 // Debug print for startup (can be removed in prod)
-                if (config_.show_logo) std::print("[\x1b[92m-\x1b[0m] SHOW_LOGO = {}\n", config_.show_logo);
-                else std::print("[\x1b[91m-\x1b[0m] SHOW_LOGO = {}\n", config_.show_logo);
+                if (config_.show_logo) 
+                    std::cout << "[\x1b[92m-\x1b[0m] SHOW_LOGO = " << std::boolalpha << config_.show_logo << "\n";
+                else 
+                    std::cout << "[\x1b[91m-\x1b[0m] SHOW_LOGO = " << std::boolalpha << config_.show_logo << "\n";
             }
         } catch (const std::exception& e) {
             // Safe fallback if config is missing
-            std::print("[91m-\x1b[0m] No config.py found (or error reading it). Using defaults.\n");
+            std::cout << "[91m-\x1b[0m] No config.py found (or error reading it). Using defaults.\n";
         }
     }
 
@@ -141,7 +147,8 @@ namespace dash::core {
                 try {
                     plugin.attr(hook_name.c_str())(data);
                 } catch (const std::exception& e) {
-                    std::print(stderr, "Error in plugin: {}\n", e.what());
+                    // Replaced std::print(stderr) with std::cerr
+                    std::cerr << "Error in plugin: " << e.what() << "\n";
                 }
             }
         }
@@ -192,7 +199,7 @@ namespace dash::core {
 
         running_ = true;
         // \r\n is needed because terminal is in RAW mode
-        std::print("<DASH> has been started. Type ':q' or ':exit' to exit.\r\n");
+        std::cout << "<DASH> has been started. Type ':q' or ':exit' to exit.\r\n" << std::flush;
 
         // Spawn the output reader thread (Child -> Screen)
         std::thread output_thread(&Engine::forward_shell_output, this);
@@ -205,7 +212,7 @@ namespace dash::core {
         
         waitpid(pty_.get_child_pid(), nullptr, 0);
         pty_.stop();
-        std::print("\r\n<DASH> Session ended.\n");
+        std::cout << "\r\n<DASH> Session ended.\n" << std::flush;
     }
 
     /**

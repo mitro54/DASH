@@ -1,5 +1,5 @@
 #include "core/session.hpp"
-#include <print>
+#include <iostream> // Added for std::cerr
 #include <cstdlib>
 #include <cstring>
 #include <system_error>
@@ -21,7 +21,7 @@ namespace dash::core {
     bool PTYSession::start() {
         // 1. Save current terminal settings
         if (tcgetattr(STDIN_FILENO, &orig_term_) == -1) {
-            std::println(stderr, "Error: Could not save terminal settings.");
+            std::cerr << "Error: Could not save terminal settings." << std::endl;
             return false;
         }
 
@@ -33,7 +33,7 @@ namespace dash::core {
         child_pid_ = forkpty(&master_fd_, nullptr, nullptr, nullptr);
 
         if (child_pid_ < 0) {
-            std::println(stderr, "Error: forkpty failed.");
+            std::cerr << "Error: forkpty failed." << std::endl;
             return false;
         }
 
@@ -50,7 +50,7 @@ namespace dash::core {
             execlp(shell, shell, "-i", "-l", nullptr);
             
             // If we get here, it failed
-            std::println(stderr, "Error: Failed to launch shell {}", shell);
+            std::cerr << "Error: Failed to launch shell " << shell << std::endl;
             std::exit(1);
         }
 
@@ -82,5 +82,4 @@ namespace dash::core {
     void PTYSession::restore_term_mode() {
         tcsetattr(STDIN_FILENO, TCSANOW, &orig_term_);
     }
-
 }

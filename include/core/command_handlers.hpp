@@ -119,7 +119,7 @@ namespace dash::core::handlers {
         std::string line;
         std::vector<std::string> original_items;
         
-        // C++23: Use std::getline to respect whitespace in filenames (requires ls -1)
+        // Use std::getline to respect whitespace in filenames (requires ls -1)
         while (std::getline(ss, line)) {
             // Remove carriage return if present (common in PTY output)
             if (!line.empty() && line.back() == '\r') line.pop_back();

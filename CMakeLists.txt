@@ -4,8 +4,8 @@ project(DASH)
 include_directories(include)
 include(FetchContent)
 
-# Settings (Standard C++23)
-set(CMAKE_CXX_STANDARD 23)
+# Settings (Standard C++20)
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
