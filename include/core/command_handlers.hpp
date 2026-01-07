@@ -18,7 +18,8 @@
 #include <format>
 #include <sys/ioctl.h>
 #include <unistd.h>
-#include <cctype> 
+#include <cctype>
+#include <future> // Added for std::async and std::future
 
 namespace dais::core::handlers {
 
@@ -218,6 +219,11 @@ namespace dais::core::handlers {
             std::string display_string;
             size_t visible_len;
         };
+        
+        // --- MULTITHREADING OPTIMIZATION ---
+        // Instead of processing files sequentially, we launch async tasks.
+        // This allows I/O intensive operations (analyze_path) to run in parallel.
+        std::vector<std::future<GridItem>> futures;
         std::vector<GridItem> grid_items;
         bool first_token = true;
 
@@ -226,6 +232,7 @@ namespace dais::core::handlers {
             std::string clean_name = clean_filename(item_raw);
             
             // 2. Filter out artifacts and special entries
+            // NOTE: Filtering must happen synchronously to avoid spawning unnecessary threads
             if (first_token && (clean_name == "ls" || clean_name == "ls -1")) { 
                 first_token = false; 
                 continue; 
@@ -239,52 +246,64 @@ namespace dais::core::handlers {
                 continue;
             }
 
-            // 3. Analyze File
-            std::filesystem::path full_path = cwd / clean_name;
-            auto stats = dais::utils::analyze_path(full_path.string());
+            // Launch Async Analysis Task
+            // std::launch::async forces a new thread (or reuse from pool implementation)
+            // ensuring true parallelism for I/O operations.
+            futures.push_back(std::async(std::launch::async, [clean_name, item_raw, cwd]() -> GridItem {
+                // 3. Analyze File (Thread Safe)
+                std::filesystem::path full_path = cwd / clean_name;
+                auto stats = dais::utils::analyze_path(full_path.string());
 
-            std::string display;
+                std::string display;
 
-            // 4. Format based on Type
-            if (stats.is_valid) {
-                if (stats.is_dir) {
-                    // DIRECTORY: "Name (DIR: 5 items)".
-                    display = std::format("{}{}/ ({}{} {}{}{})", 
-                        clean_name,
-                        Theme::STRUCTURE, // /
-                        Theme::VALUE, stats.item_count, 
-                        Theme::UNIT, "items",
-                        Theme::STRUCTURE // /
-                    );
-                } else {
-                    // FILE: "Name (10KB, 50R, 80C)"
-                    std::string info;
-                    std::string size_str = fmt_size(stats.size_bytes);
-
-                    if (stats.is_text) {
-                        std::string row_str = fmt_rows(stats.rows, stats.is_estimated);
-                        // Construct info string with Themed punctuation
-                        info = std::format("{}{}, {}{}, {}{}{}{}", 
-                            size_str, Theme::STRUCTURE, row_str, Theme::STRUCTURE,
-                            Theme::VALUE, stats.max_cols, Theme::UNIT, " C");
+                // 4. Format based on Type
+                if (stats.is_valid) {
+                    if (stats.is_dir) {
+                        // DIRECTORY: "Name (DIR: 5 items)".
+                        display = std::format("{}{}/ ({}{} {}{}{})", 
+                            clean_name,
+                            Theme::STRUCTURE, // /
+                            Theme::VALUE, stats.item_count, 
+                            Theme::UNIT, "items",
+                            Theme::STRUCTURE // /
+                        );
                     } else {
-                        info = size_str;
+                        // FILE: "Name (10KB, 50R, 80C)"
+                        std::string info;
+                        std::string size_str = fmt_size(stats.size_bytes);
+
+                        if (stats.is_text) {
+                            std::string row_str = fmt_rows(stats.rows, stats.is_estimated);
+                            // Construct info string with Themed punctuation
+                            info = std::format("{}{}, {}{}, {}{}{}{}", 
+                                size_str, Theme::STRUCTURE, row_str, Theme::STRUCTURE,
+                                Theme::VALUE, stats.max_cols, Theme::UNIT, " C");
+                        } else {
+                            info = size_str;
+                        }
+
+                        // Wrap info in parentheses
+                        display = std::format("{} {}({}{})", 
+                            clean_name,
+                            Theme::STRUCTURE, info, Theme::STRUCTURE
+                        );
                     }
-
-                    // Wrap info in parentheses
-                    display = std::format("{} {}({}{})", 
-                        clean_name,
-                        Theme::STRUCTURE, info, Theme::STRUCTURE
-                    );
+                } else {
+                    // If analysis failed (e.g. permission error), just show the name
+                    display = clean_name;
                 }
-            } else {
-                // If analysis failed (e.g. permission error), just show the name
-                display = clean_name;
-            }
 
-            // Ensure coloring doesn't bleed
-            display += Theme::RESET;
-            grid_items.push_back({display, get_visible_length(display)});
+                // Ensure coloring doesn't bleed
+                display += Theme::RESET;
+                return {display, get_visible_length(display)};
+            }));
+        }
+
+        // --- COLLECT RESULTS ---
+        // Wait for all threads to finish and collect results in order.
+        // This ensures the output is displayed only when scanning is 100% complete.
+        for (auto& f : futures) {
+            grid_items.push_back(f.get());
         }
 
         if (grid_items.empty()) return "";
