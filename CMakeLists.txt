@@ -23,7 +23,7 @@ FetchContent_MakeAvailable(pybind11)
 
 # Find python
 # Relaxed version requirement slightly to ensure compatibility if you update Python later
-find_package(Python 3.10 COMPONENTS Interpreter Development REQUIRED)
+find_package(Python 3.8 COMPONENTS Interpreter Development REQUIRED)
 
 # THE INGREDIENTS (List every .cpp file you create here)
 add_executable(DAIS 
