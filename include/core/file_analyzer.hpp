@@ -7,6 +7,8 @@
 #include <algorithm>
 #include <vector>
 #include <cstdint>
+#include <cstdio>  // Added for fopen, fread (Optimization)
+#include <cstring> // Added for memchr (Optimization)
 
 namespace dais::utils {
     namespace fs = std::filesystem;
@@ -55,12 +57,16 @@ namespace dais::utils {
         fs::path p(filename);
         FileStats stats;
 
+        // OPTIMIZATION 1: Single Syscall for metadata
+        // fs::status() retrieves type and permissions in one go, avoiding multiple lookups.
+        fs::file_status status = fs::status(p, ec);
+
         // 1. Validation check
-        if (!fs::exists(p, ec)) return stats; 
+        if (ec || !fs::exists(status)) return stats; 
         stats.is_valid = true;
 
         // 2. Directory Analysis
-        if (fs::is_directory(p, ec)) {
+        if (fs::is_directory(status)) {
             stats.is_dir = true;
             try {
                 // std::distance is linear time; acceptable for typical local dev directories.
@@ -72,7 +78,7 @@ namespace dais::utils {
         }
 
         // 3. File Analysis
-        if (fs::is_regular_file(p, ec)) {
+        if (fs::is_regular_file(status)) {
             stats.size_bytes = fs::file_size(p, ec);
             
             std::string ext = p.extension().string();
@@ -91,48 +97,59 @@ namespace dais::utils {
             // Optimization: Skip heavy I/O scanning if empty or binary
             if (!stats.is_text || stats.size_bytes == 0) return stats;
 
-            // 4. Content Scanning
-            std::ifstream file(p);
-            if (!file.is_open()) return stats;
+            // 4. Content Scanning (Optimized Zero-Allocation)
+            // Replaced std::ifstream with fopen/fread to avoid heavy stream initialization
+            // and string allocations for every line.
+            FILE* f = std::fopen(filename.c_str(), "rb");
+            if (!f) return stats;
 
-            size_t rows = 0;
-            size_t bytes_read = 0;
-            std::string line;
+            // Use stack buffer for speed (no heap allocation)
+            char buffer[MAX_SCAN_BYTES];
+            size_t bytes_read = std::fread(buffer, 1, MAX_SCAN_BYTES, f);
+            std::fclose(f); 
 
-            // --- CSV/Data Column Counting ---
-            // We read the first line specifically to count delimiters for data files.
-            if (stats.is_csv) {
-                if (std::getline(file, line)) {
-                    char delimiter = (ext == ".tsv") ? '\t' : ',';
-                    // Columns = Delimiters + 1
-                    stats.max_cols = std::count(line.begin(), line.end(), delimiter) + 1;
-                    
-                    // Critical: Reset file stream state to beginning for the row counter below
-                    file.clear(); 
-                    file.seekg(0);
+            if (bytes_read == 0) return stats;
+
+            // --- Row & Column Counting Loop (Byte-level) ---
+            size_t current_line_len = 0;
+            bool first_line_scanned = false;
+            char delimiter = (ext == ".tsv") ? '\t' : ',';
+
+            for (size_t i = 0; i < bytes_read; ++i) {
+                char c = buffer[i];
+                if (c == '\n') {
+                    stats.rows++;                 
+                    // Logic for the very first line (CSV columns or Text width)
+                    if (!first_line_scanned) {
+                        // For CSV, columns = delimiters + 1. We counted delimiters below, so add 1 now.
+                        if (stats.is_csv) stats.max_cols++; 
+                        // For Text, simply take the length
+                        else if (current_line_len > stats.max_cols) stats.max_cols = current_line_len;
+
+                        first_line_scanned = true;
+                    } 
+                    // Logic for subsequent lines (Text width only)
+                    else if (!stats.is_csv) {
+                        if (current_line_len > stats.max_cols) stats.max_cols = current_line_len;
+                    }
+                    current_line_len = 0;
+                } else {
+                    current_line_len++;
+                    // If first line of a CSV, count delimiters
+                    if (!first_line_scanned && stats.is_csv && c == delimiter) {
+                        stats.max_cols++;
+                    }
                 }
             }
-            
-            // --- Row Counting Loop ---
-            // Scan with safety caps to ensure shell responsiveness
-            while (bytes_read < MAX_SCAN_BYTES && rows < MAX_SCAN_LINES && std::getline(file, line)) {
-                rows++;
-                size_t line_bytes = line.size() + 1; // +1 for newline approximation
-                bytes_read += line_bytes;
-                
-                // For non-CSV text files, 'max_cols' represents the widest line width (characters)
-                if (!stats.is_csv) {
-                    if (line.size() > stats.max_cols) stats.max_cols = line.size();
-                }
-            }
+
+            // Handle last line if no trailing newline
+            if (bytes_read > 0 && buffer[bytes_read - 1] != '\n') stats.rows++;
 
             // 5. Estimation Logic
             // If we hit the read limit before EOF, extrapolate total rows based on average byte/row ratio.
-            if (bytes_read >= stats.size_bytes || file.eof()) {
-                stats.rows = rows;
-            } else {
-                double ratio = (bytes_read > 0) ? (static_cast<double>(stats.size_bytes) / bytes_read) : 1.0;
-                stats.rows = static_cast<size_t>(rows * ratio);
+            if (stats.size_bytes > bytes_read) {
+                double ratio = static_cast<double>(stats.size_bytes) / bytes_read;
+                stats.rows = static_cast<size_t>(stats.rows * ratio);
                 stats.is_estimated = true;
             }
         }
