@@ -7,8 +7,8 @@
 #include <algorithm>
 #include <vector>
 #include <cstdint>
-#include <cstdio>  // Added for fopen, fread (Optimization)
-#include <cstring> // Added for memchr (Optimization)
+#include <cstdio>  // fopen, fread
+#include <cstring> // memchr
 
 namespace dais::utils {
     namespace fs = std::filesystem;
@@ -57,7 +57,7 @@ namespace dais::utils {
         fs::path p(filename);
         FileStats stats;
 
-        // OPTIMIZATION 1: Single Syscall for metadata
+        // Single Syscall for metadata
         // fs::status() retrieves type and permissions in one go, avoiding multiple lookups.
         fs::file_status status = fs::status(p, ec);
 
@@ -94,11 +94,10 @@ namespace dais::utils {
                              ext == ".css" || ext == ".xml" || ext == ".yml" || 
                              ext == ".ini" || ext == ".conf"|| stats.is_csv);
 
-            // Optimization: Skip heavy I/O scanning if empty or binary
+            // Skip heavy I/O scanning if empty or binary
             if (!stats.is_text || stats.size_bytes == 0) return stats;
 
             // 4. Content Scanning (Optimized Zero-Allocation)
-            // Replaced std::ifstream with fopen/fread to avoid heavy stream initialization
             // and string allocations for every line.
             FILE* f = std::fopen(filename.c_str(), "rb");
             if (!f) return stats;

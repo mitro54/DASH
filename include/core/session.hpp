@@ -20,7 +20,7 @@ namespace dais::core {
 
         // Updates the PTY size (rows/cols) to match the physical window.
         // Handles "Safe Width" calculation for the logo injection.
-        void resize(int rows, int cols);
+        void resize(int rows, int cols, bool show_logo);
 
         // Getters
         [[nodiscard]] int get_master_fd() const { return master_fd_; }

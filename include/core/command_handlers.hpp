@@ -133,7 +133,6 @@ namespace dais::core::handlers {
      * @brief Cleans a filename of invisible artifacts.
      * * Combines ANSI stripping with trimming of non-printable characters (whitespace, 
      * carriage returns) from the start and end of the string.
-     * Fixes the "missing pipe |" bug caused by hidden shell control characters.
      * * @param raw The raw line captured from stdout.
      * @return A clean, filesystem-ready filename string.
      */
@@ -260,7 +259,7 @@ namespace dais::core::handlers {
                 // 4. Format based on Type
                 if (stats.is_valid) {
                     if (stats.is_dir) {
-                        // DIRECTORY: "Name (DIR: 5 items)".
+                        // DIRECTORY: "Name/ (5 items)".
                         display = std::format("{}{}/ ({}{} {}{}{})", 
                             clean_name,
                             Theme::STRUCTURE, // /
@@ -313,7 +312,7 @@ namespace dais::core::handlers {
 
         if (grid_items.empty()) return "";
 
-        // 5. Render Grid (Flex-wrap Layout)
+        // 5. Render Grid
         int term_width = get_terminal_width() - 2; 
         if (term_width < 10) term_width = 10; 
 

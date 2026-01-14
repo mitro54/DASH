@@ -205,7 +205,7 @@ namespace dais::core {
      * 1. Users use aliases (e.g., '..', 'gohome').
      * 2. Users use TAB completion, which the wrapper doesn't see fully resolved.
      * * Instead, we use OS-specific system calls to inspect the child process directly.
-     * This provides 100% accuracy regardless of how the directory was changed.
+     * This provides almost 100% accuracy regardless of how the directory was changed.
      */
     void Engine::sync_child_cwd() {
         pid_t pid = pty_.get_child_pid();
@@ -238,10 +238,10 @@ namespace dais::core {
         if (!pty_.start()) return;
 
         // We must sync the window size AFTER the PTY has started (so master_fd is valid),
-        // but BEFORE we start forwarding output. This prevents the "wrapping glitch" on startup.
+        // but BEFORE we start forwarding output, otherwise text wraps weirdly.
         struct winsize w;
         if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &w) != -1) {
-            pty_.resize(w.ws_row, w.ws_col);
+            pty_.resize(w.ws_row, w.ws_col, config_.show_logo);
         }
 
         running_ = true;

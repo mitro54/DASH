@@ -29,7 +29,7 @@ namespace dais::core {
         
         // Helper to allow main.cpp to resize window
         void resize_window(int rows, int cols) {
-            pty_.resize(rows, cols);
+            pty_.resize(rows, cols, config_.show_logo);
         }
 
     private:

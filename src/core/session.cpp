@@ -112,13 +112,16 @@ namespace dais::core {
      * * @param rows New number of rows (height).
      * @param cols New number of columns (width).
      */
-    void PTYSession::resize(int rows, int cols) {
+    void PTYSession::resize(int rows, int cols, bool show_logo) {
         struct winsize ws{};
         ws.ws_row = static_cast<unsigned short>(rows);
         
         // Subtract 4 columns to reserve space for the logo.
         // Safety check: ensure we don't underflow if the window is tiny.
-        unsigned short safe_cols = (cols > 10) ? (cols - 4) : cols;
+        if (show_logo)
+            if (cols > 4) cols -= 4;
+            else cols = 1;
+        unsigned short safe_cols = cols;
         ws.ws_col = static_cast<unsigned short>(safe_cols);
         
         ioctl(master_fd_, TIOCSWINSZ, &ws);
