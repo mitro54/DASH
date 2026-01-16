@@ -155,10 +155,26 @@ namespace dais::core {
                 load_color("UNIT", handlers::Theme::UNIT);
                 load_color("VALUE", handlers::Theme::VALUE);
                 load_color("ESTIMATE", handlers::Theme::ESTIMATE);
+                load_color("TEXT", handlers::Theme::TEXT);
+                load_color("SYMLINK", handlers::Theme::SYMLINK);
                 load_color("LOGO", handlers::Theme::LOGO);
                 load_color("SUCCESS", handlers::Theme::SUCCESS);
                 load_color("WARNING", handlers::Theme::WARNING);
                 load_color("ERROR", handlers::Theme::ERROR);
+            }
+
+            // 4. LS FORMAT TEMPLATES
+            if (py::hasattr(conf_module, "LS_FORMATS")) {
+                py::dict formats = conf_module.attr("LS_FORMATS").cast<py::dict>();
+                auto load_fmt = [&](const char* key, std::string& target) {
+                    if (formats.contains(key)) {
+                        target = formats[key].cast<std::string>();
+                    }
+                };
+                load_fmt("directory", config_.ls_fmt_directory);
+                load_fmt("text_file", config_.ls_fmt_text_file);
+                load_fmt("binary_file", config_.ls_fmt_binary_file);
+                load_fmt("error", config_.ls_fmt_error);
             }
 
             // Debug Print
@@ -489,7 +505,14 @@ namespace dais::core {
         std::string processed_content;
         if (cmd_copy == "ls") {
             //  - Handlers transform plain list into grid
-            processed_content = handlers::handle_ls(content_payload, shell_cwd_);
+            // Build LSFormats from config
+            handlers::LSFormats formats;
+            formats.directory = config_.ls_fmt_directory;
+            formats.text_file = config_.ls_fmt_text_file;
+            formats.binary_file = config_.ls_fmt_binary_file;
+            formats.error = config_.ls_fmt_error;
+            
+            processed_content = handlers::handle_ls(content_payload, shell_cwd_, formats);
         } else {
             processed_content = handlers::handle_generic(content_payload);
         }

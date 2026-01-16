@@ -21,6 +21,7 @@
 #include <unistd.h>
 #include <cctype>
 #include <future> // std::async and std::future
+#include <unordered_map>
 
 namespace dais::core::handlers {
 
@@ -42,7 +43,7 @@ namespace dais::core::handlers {
         inline static std::string UNIT      = "\x1b[38;5;109m"; // Sage Blue (KB, MB, DIR label)
         inline static std::string VALUE     = "\x1b[0m";        // Default White (Numbers, Filenames)
         inline static std::string ESTIMATE  = "\x1b[38;5;139m"; // Muted Purple (Tilde ~)
-        inline static std::string DIR_NAME  = "\x1b[1m\x1b[38;5;39m"; // Bold Blue (Unused on request, kept for config)
+        inline static std::string TEXT      = "\x1b[0m";        // Default White (Directories)
         inline static std::string SYMLINK   = "\x1b[38;5;36m";  // Cyan (Symlinks)
         
         // --- Engine / System Messages ---
@@ -153,31 +154,112 @@ namespace dais::core::handlers {
     }
 
     // ==================================================================================
+    // LS FORMAT TEMPLATES
+    // ==================================================================================
+
+    /**
+     * @brief Holds format template strings for ls output.
+     * Passed to handle_ls() to allow user customization via config.py.
+     * 
+     * Available placeholders:
+     *   {name}  - filename or directory name
+     *   {size}  - formatted size (e.g., "10KB")
+     *   {rows}  - row count (e.g., "50" or "~1.2k")
+     *   {cols}  - max column width
+     *   {count} - item count (directories only)
+     * 
+     * Color placeholders (replaced with Theme values):
+     *   {RESET}, {STRUCTURE}, {UNIT}, {VALUE}, {ESTIMATE}, {TEXT}, {SYMLINK}
+     */
+    struct LSFormats {
+        // Default templates matching original hardcoded output
+        // Note: {size} includes VALUE/UNIT coloring, {rows} includes ESTIMATE coloring for ~
+        std::string directory   = "{TEXT}{name}{STRUCTURE}/ ({VALUE}{count} {UNIT}items{STRUCTURE})";
+        std::string text_file   = "{TEXT}{name} {STRUCTURE}({VALUE}{size}{STRUCTURE}, {VALUE}{rows} {UNIT}R{STRUCTURE}, {VALUE}{cols} {UNIT}C{STRUCTURE})";
+        std::string binary_file = "{TEXT}{name} {STRUCTURE}({VALUE}{size}{STRUCTURE})";
+        std::string error       = "{TEXT}{name}";
+    };
+
+    /**
+     * @brief Applies placeholder substitution to a format template.
+     * Substitutes both data placeholders ({name}, {size}, etc.) and 
+     * color placeholders ({STRUCTURE}, {VALUE}, etc.).
+     * @param tmpl The template string with {placeholder} syntax.
+     * @param vars Map of placeholder names to their replacement values.
+     * @return The formatted string with all placeholders substituted.
+     */
+    inline std::string apply_template(
+        const std::string& tmpl,
+        const std::unordered_map<std::string, std::string>& vars
+    ) {
+        std::string result = tmpl;
+        
+        // First, substitute color placeholders from Theme
+        const std::unordered_map<std::string, std::string> colors = {
+            {"RESET", Theme::RESET},
+            {"STRUCTURE", Theme::STRUCTURE},
+            {"UNIT", Theme::UNIT},
+            {"VALUE", Theme::VALUE},
+            {"ESTIMATE", Theme::ESTIMATE},
+            {"TEXT", Theme::TEXT},
+            {"SYMLINK", Theme::SYMLINK}
+        };
+        
+        for (const auto& [key, value] : colors) {
+            std::string placeholder = "{" + key + "}";
+            size_t pos;
+            while ((pos = result.find(placeholder)) != std::string::npos) {
+                result.replace(pos, placeholder.length(), value);
+            }
+        }
+        
+        // Then substitute data placeholders
+        for (const auto& [key, value] : vars) {
+            std::string placeholder = "{" + key + "}";
+            size_t pos;
+            while ((pos = result.find(placeholder)) != std::string::npos) {
+                result.replace(pos, placeholder.length(), value);
+            }
+        }
+        return result;
+    }
+
+    // ==================================================================================
     // FORMATTERS
     // ==================================================================================
 
-    /** @brief Formats byte counts into human-readable strings (B, KB, MB) using Theme colors. */
+    /** 
+     * @brief Formats byte counts into human-readable strings (e.g., "10B", "1.5KB", "2.3MB", "1.1GB").
+     * Includes Theme::VALUE color for the number and Theme::UNIT color for the suffix.
+     */
     inline std::string fmt_size(uintmax_t bytes) {
         if (bytes < 1024) 
-            return std::format("{}{}{}{}", Theme::VALUE, bytes, Theme::UNIT, "B");
+            return std::format("{}{}{}B", Theme::VALUE, bytes, Theme::UNIT);
         if (bytes < 1024 * 1024) 
-            return std::format("{}{:.1f}{}{}", Theme::VALUE, bytes/1024.0, Theme::UNIT, "KB");
-        return std::format("{}{:.1f}{}{}", Theme::VALUE, bytes/(1024.0*1024.0), Theme::UNIT, "MB");
+            return std::format("{}{:.1f}{}KB", Theme::VALUE, bytes/1024.0, Theme::UNIT);
+        if (bytes < 1024 * 1024 * 1024)
+            return std::format("{}{:.1f}{}MB", Theme::VALUE, bytes/(1024.0*1024.0), Theme::UNIT);
+        return std::format("{}{:.1f}{}GB", Theme::VALUE, bytes/(1024.0*1024.0*1024.0), Theme::UNIT);
     }
 
-    /** @brief Formats row counts, adding a tilde (~) and specific color if the count is estimated. */
+    /** 
+     * @brief Formats row counts (e.g., "50", "~1.2k", "~2.5M").
+     * Returns raw value without "R" suffix - formatting controlled via templates.
+     * Adds colored tilde (~) prefix for estimated values using Theme::ESTIMATE.
+     */
     inline std::string fmt_rows(size_t rows, bool estimated) {
         // Compensation for the observed overestimation (~9-10%)
         if (estimated) {
             rows = static_cast<size_t>(rows * 0.92);
         }
-        std::string tilde = estimated ? std::string(Theme::ESTIMATE) + "~" : "";
+        // Tilde is colored with ESTIMATE color for visual distinction
+        std::string tilde = estimated ? Theme::ESTIMATE + "~" + Theme::VALUE : "";
 
         if (rows >= 1000000)
-            return std::format("{}{}{:.1f}{}{}", tilde, Theme::VALUE, rows / 1000000.0, Theme::UNIT, "M R");
+            return std::format("{}{:.1f}M", tilde, rows / 1000000.0);
         if (rows >= 1000)
-            return std::format("{}{}{:.1f}{}{}", tilde, Theme::VALUE, rows / 1000.0, Theme::UNIT, "k R");
-        return std::format("{}{}{}{}{}", tilde, Theme::VALUE, rows, Theme::UNIT, " R");
+            return std::format("{}{:.1f}k", tilde, rows / 1000.0);
+        return std::format("{}{}", tilde, rows);
     }
 
     // ==================================================================================
@@ -194,13 +276,18 @@ namespace dais::core::handlers {
      * 1. Parse Input: Reads the raw string line-by-line (relies on engine injecting 'ls -1').
      * 2. Clean: Removes ANSI codes and whitespace artifacts to get valid filenames.
      * 3. Analyze: Uses 'file_analyzer' to get metadata (size, rows, type).
-     * 4. Format: Colors and structures the data based on the Theme.
+     * 4. Format: Uses configurable templates to structure output.
      * 5. Layout: Arranges items into a responsive grid that fits the terminal width.
      * * @param raw_output The raw stdout captured from the shell.
      * @param cwd The current working directory (needed to resolve relative filenames).
+     * @param formats The format templates loaded from config (or defaults).
      * @return The formatted, colorized grid string.
      */
-    inline std::string handle_ls(std::string_view raw_output, const std::filesystem::path& cwd) {
+    inline std::string handle_ls(
+        std::string_view raw_output, 
+        const std::filesystem::path& cwd,
+        const LSFormats& formats
+    ) {
         std::stringstream ss{std::string(raw_output)};
         std::string line;
         std::vector<std::string> original_items;
@@ -250,48 +337,45 @@ namespace dais::core::handlers {
             }
 
             // Enqueue Analysis Task to Thread Pool
-            futures.push_back(pool.enqueue([clean_name, cwd]() -> GridItem {
+            futures.push_back(pool.enqueue([clean_name, cwd, formats]() -> GridItem {
                 // 3. Analyze File (Thread Safe)
                 std::filesystem::path full_path = cwd / clean_name;
                 auto stats = dais::utils::analyze_path(full_path.string());
 
                 std::string display;
 
-                // 4. Format based on Type
+                // 4. Format based on Type using templates
                 if (stats.is_valid) {
                     if (stats.is_dir) {
-                        // DIRECTORY: "Name/ (5 items)".
-                        display = std::format("{}{}/ ({}{} {}{}{})", 
-                            clean_name,
-                            Theme::STRUCTURE, // /
-                            Theme::VALUE, stats.item_count, 
-                            Theme::UNIT, "items",
-                            Theme::STRUCTURE // /
-                        );
+                        // DIRECTORY: Use directory template
+                        display = apply_template(formats.directory, {
+                            {"name", clean_name},
+                            {"count", std::to_string(stats.item_count)}
+                        });
                     } else {
-                        // FILE: "Name (10KB, 50R, 80C)"
-                        std::string info;
+                        // FILE: Use text_file or binary_file template
                         std::string size_str = fmt_size(stats.size_bytes);
 
                         if (stats.is_text) {
                             std::string row_str = fmt_rows(stats.rows, stats.is_estimated);
-                            // Construct info string with Themed punctuation
-                            info = std::format("{}{}, {}{}, {}{}{}{}", 
-                                size_str, Theme::STRUCTURE, row_str, Theme::STRUCTURE,
-                                Theme::VALUE, stats.max_cols, Theme::UNIT, " C");
+                            display = apply_template(formats.text_file, {
+                                {"name", clean_name},
+                                {"size", size_str},
+                                {"rows", row_str},
+                                {"cols", std::to_string(stats.max_cols)}
+                            });
                         } else {
-                            info = size_str;
+                            display = apply_template(formats.binary_file, {
+                                {"name", clean_name},
+                                {"size", size_str}
+                            });
                         }
-
-                        // Wrap info in parentheses
-                        display = std::format("{} {}({}{})", 
-                            clean_name,
-                            Theme::STRUCTURE, info, Theme::STRUCTURE
-                        );
                     }
                 } else {
-                    // If analysis failed (e.g. permission error), just show the name
-                    display = clean_name;
+                    // If analysis failed (e.g. permission error), use error template
+                    display = apply_template(formats.error, {
+                        {"name", clean_name}
+                    });
                 }
 
                 // Ensure coloring doesn't bleed

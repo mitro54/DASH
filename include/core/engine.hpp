@@ -17,6 +17,15 @@ namespace dais::core {
         bool show_logo = true;
         // Default fallbacks in case config.py fails
         std::vector<std::string> shell_prompts = {"$ ", "% ", "> ", "# "};
+        
+        // LS format templates (loaded from config.py, these are defaults)
+        // Data placeholders: {name}, {size}, {rows}, {cols}, {count}
+        // Color placeholders: {RESET}, {STRUCTURE}, {UNIT}, {VALUE}, {ESTIMATE}, {TEXT}, {SYMLINK}
+        // Note: {size} and {rows} include their own coloring (VALUE/UNIT for size, ESTIMATE for ~ prefix)
+        std::string ls_fmt_directory   = "{name}{STRUCTURE}/ ({VALUE}{count} {UNIT}items{STRUCTURE})";
+        std::string ls_fmt_text_file   = "{name} {STRUCTURE}({size}{STRUCTURE}, {rows} {UNIT}R{STRUCTURE}, {VALUE}{cols} {UNIT}C{STRUCTURE})";
+        std::string ls_fmt_binary_file = "{name} {STRUCTURE}({size}{STRUCTURE})";
+        std::string ls_fmt_error       = "{name}";
     };
 
     class Engine {
