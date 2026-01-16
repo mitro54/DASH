@@ -6,7 +6,25 @@
 
 ## What
 - DAIS is a PTY (pseudoterminal) shell wrapper. 
-- Core is written in C++, that will support Python scripts as extensions.
+- Core is written in C++, that supports Python scripts as extensions.
+
+## Current Features
+- **Zero-Latency PTY**: Seamless shell wrapping with native C++ performance.
+- **Python Plugin System**: Extend functionality using standard Python scripts
+- **Smart `ls` Command**:
+    - **Data-Aware**: Automatically detects CSV/TSV files and displays column counts
+    - **Text Insights**: Shows line counts and max line width for code/text files
+    - **Fully Configurable**: Define your own output templates, icons, and colors
+    - **Custom File Types**: Configure which extensions count as "text" or "data"
+
+### Visual Customization
+DAIS allows you to style your file listing exactly how you want it—from minimal layouts to rich, icon-enhanced displays.
+
+**Default look:**
+![Default Style](docs/assets/ls_default.png)
+
+**One possible custom look:**
+![Icon Style](docs/assets/ls_custom.png)
 
 ## Scope
 - Projects scope is to create a helpful open-source extension for Data / AI Engineers or like minded people in their day-to-day tasks, running in their favorite shell.
