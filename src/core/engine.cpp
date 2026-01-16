@@ -11,7 +11,6 @@
 
 #include "core/engine.hpp"
 #include "core/command_handlers.hpp"
-#include <cstring> // for std::strlen
 #include <thread>
 #include <array>
 #include <string>
@@ -156,8 +155,6 @@ namespace dais::core {
                 load_color("UNIT", handlers::Theme::UNIT);
                 load_color("VALUE", handlers::Theme::VALUE);
                 load_color("ESTIMATE", handlers::Theme::ESTIMATE);
-                load_color("DIR_NAME", handlers::Theme::DIR_NAME);
-                load_color("SYMLINK", handlers::Theme::SYMLINK);
                 load_color("LOGO", handlers::Theme::LOGO);
                 load_color("SUCCESS", handlers::Theme::SUCCESS);
                 load_color("WARNING", handlers::Theme::WARNING);

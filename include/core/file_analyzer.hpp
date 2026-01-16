@@ -2,13 +2,11 @@
 
 #include <string>
 #include <filesystem>
-#include <fstream>
 #include <format>
 #include <algorithm>
 #include <vector>
 #include <cstdint>
-#include <cstdio>  // fopen, fread
-#include <cstring> // memchr
+#include <cstdio>  // fopen, fread, fclose
 
 namespace dais::utils {
     namespace fs = std::filesystem;
@@ -40,10 +38,8 @@ namespace dais::utils {
     };
 
     // --- Performance Configuration ---
-    // Limits to prevent UI freezes when scanning large files on the main thread.
-    // In a production environment, file scanning should move to a thread pool.
+    // Limit to prevent UI freezes when scanning large files.
     constexpr size_t MAX_SCAN_BYTES = 32 * 1024; // Scan max 32KB
-    constexpr size_t MAX_SCAN_LINES = 2000;      // Scan max 2000 lines
 
     /**
      * @brief Analyzes a path to extract metadata (size, row count, type).
