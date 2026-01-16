@@ -182,6 +182,24 @@ namespace dais::core::handlers {
     };
 
     /**
+     * @brief Configuration for LS output sorting.
+     * 
+     * Passed to handle_ls() to control the order of displayed items.
+     * Uses std::sort with a custom comparator (introsort) for guaranteed
+     * O(n log n) performance, suitable for directories with 10,000+ files.
+     * 
+     * Modifiable at runtime via :ls command:
+     * - :ls          → Show current settings
+     * - :ls d        → Reset to defaults
+     * - :ls size desc false → Sort by size, descending, dirs mixed with files
+     */
+    struct LSSortConfig {
+        std::string by = "type";     ///< Sort criterion: "name", "size", "type", "rows", "none"
+        std::string order = "asc";   ///< Sort direction: "asc" or "desc"
+        bool dirs_first = true;      ///< If true, directories always appear before files
+    };
+
+    /**
      * @brief Applies placeholder substitution to a format template.
      * Substitutes both data placeholders ({name}, {size}, etc.) and 
      * color placeholders ({STRUCTURE}, {VALUE}, etc.).
@@ -273,21 +291,26 @@ namespace dais::core::handlers {
 
     /**
      * @brief Intercepts 'ls' output and reformats it into a rich data grid.
-     * * Logic Flow:
+     * 
+     * Logic Flow:
      * 1. Parse Input: Reads the raw string line-by-line (relies on engine injecting 'ls -1').
      * 2. Clean: Removes ANSI codes and whitespace artifacts to get valid filenames.
      * 3. Analyze: Uses 'file_analyzer' to get metadata (size, rows, type).
-     * 4. Format: Uses configurable templates to structure output.
-     * 5. Layout: Arranges items into a responsive grid that fits the terminal width.
-     * * @param raw_output The raw stdout captured from the shell.
+     * 4. Sort: Applies user-configured sorting (uses std::sort - O(n log n) introsort).
+     * 5. Format: Uses configurable templates to structure output.
+     * 6. Layout: Arranges items into a responsive grid that fits the terminal width.
+     * 
+     * @param raw_output The raw stdout captured from the shell.
      * @param cwd The current working directory (needed to resolve relative filenames).
      * @param formats The format templates loaded from config (or defaults).
+     * @param sort_cfg The sorting configuration.
      * @return The formatted, colorized grid string.
      */
     inline std::string handle_ls(
         std::string_view raw_output, 
         const std::filesystem::path& cwd,
-        const LSFormats& formats
+        const LSFormats& formats,
+        const LSSortConfig& sort_cfg
     ) {
         std::stringstream ss{std::string(raw_output)};
         std::string line;
@@ -303,9 +326,13 @@ namespace dais::core::handlers {
 
         if (original_items.empty()) return "";
 
+        // --- PHASE 1: COLLECT RAW DATA ---
+        // GridItem now stores raw data for sorting, formatted after sort
         struct GridItem {
-            std::string display_string;
-            size_t visible_len;
+            std::string name;
+            dais::utils::FileStats stats;
+            std::string display_string;  // Filled after sorting
+            size_t visible_len = 0;
         };
         
         // --- THREAD POOL ---
@@ -338,73 +365,168 @@ namespace dais::core::handlers {
             }
 
             // Enqueue Analysis Task to Thread Pool
-            futures.push_back(pool.enqueue([clean_name, cwd, formats]() -> GridItem {
-                // 3. Analyze File (Thread Safe)
+            // Now returns raw data (name + stats), formatting done after sort
+            futures.push_back(pool.enqueue([clean_name, cwd]() -> GridItem {
                 std::filesystem::path full_path = cwd / clean_name;
                 auto stats = dais::utils::analyze_path(full_path.string());
-
-                std::string display;
-
-                // 4. Format based on Type using templates
-                if (stats.is_valid) {
-                    if (stats.is_dir) {
-                        // DIRECTORY: Use directory template
-                        display = apply_template(formats.directory, {
-                            {"name", clean_name},
-                            {"count", std::to_string(stats.item_count)}
-                        });
-                    } else {
-                        // FILE: Use text_file, data_file, or binary_file template
-                        std::string size_str = fmt_size(stats.size_bytes);
-
-                        if (stats.is_text) {
-                            std::string row_str = fmt_rows(stats.rows, stats.is_estimated);
-                            
-                            // Use data_file template for CSV/TSV/JSON files
-                            if (stats.is_data) {
-                                display = apply_template(formats.data_file, {
-                                    {"name", clean_name},
-                                    {"size", size_str},
-                                    {"rows", row_str},
-                                    {"cols", std::to_string(stats.max_cols)}
-                                });
-                            } else {
-                                display = apply_template(formats.text_file, {
-                                    {"name", clean_name},
-                                    {"size", size_str},
-                                    {"rows", row_str},
-                                    {"cols", std::to_string(stats.max_cols)}
-                                });
-                            }
-                        } else {
-                            display = apply_template(formats.binary_file, {
-                                {"name", clean_name},
-                                {"size", size_str}
-                            });
-                        }
-                    }
-                } else {
-                    // If analysis failed (e.g. permission error), use error template
-                    display = apply_template(formats.error, {
-                        {"name", clean_name}
-                    });
-                }
-
-                // Ensure coloring doesn't bleed
-                display += Theme::RESET;
-                return {display, get_visible_length(display)};
+                return {clean_name, stats, "", 0};
             }));
         }
 
         // --- COLLECT RESULTS ---
-        // Wait for workers to finish processing. 
-        // Order is preserved because we pushed futures in order.
         for (auto& f : futures) {
             try {
                 grid_items.push_back(f.get());
             } catch (...) {
                 // Fallback in unlikely event of thread error, ignore item to prevent crash
             }
+        }
+
+        if (grid_items.empty()) return "";
+
+        // =====================================================================
+        // PHASE 2: SORT
+        // =====================================================================
+        // Sort collected items according to user configuration.
+        // 
+        // Algorithm: std::sort (introsort) - O(n log n) guaranteed worst-case.
+        // This is optimal for general-purpose sorting and handles 10,000+ items
+        // without performance degradation.
+        //
+        // Sort priority:
+        // 1. dirs_first: If enabled, directories always appear before files
+        // 2. Primary criterion: name, size, type (extension), rows
+        // 3. Order: ascending or descending
+        // =====================================================================
+        if (sort_cfg.by != "none" && !sort_cfg.by.empty()) {
+            std::sort(grid_items.begin(), grid_items.end(),
+                [&sort_cfg](const GridItem& a, const GridItem& b) -> bool {
+                    
+                    // Step 1: Handle dirs_first grouping
+                    // If enabled, directories always come before files regardless
+                    // of the primary sort criterion
+                    if (sort_cfg.dirs_first) {
+                        if (a.stats.is_dir && !b.stats.is_dir) return true;
+                        if (!a.stats.is_dir && b.stats.is_dir) return false;
+                    }
+                    
+                    // Step 2: Apply primary sort criterion
+                    // Returns true if 'a' should come before 'b' in ascending order
+                    bool less = false;
+                    
+                    if (sort_cfg.by == "name") {
+                        // Alphabetical sorting (case-sensitive)
+                        less = a.name < b.name;
+                        
+                    } else if (sort_cfg.by == "size") {
+                        // Size-based sorting
+                        // Directories: sort by item_count (number of children)
+                        // Files: sort by size_bytes
+                        if (a.stats.is_dir && b.stats.is_dir) {
+                            less = a.stats.item_count < b.stats.item_count;
+                        } else {
+                            less = a.stats.size_bytes < b.stats.size_bytes;
+                        }
+                        
+                    } else if (sort_cfg.by == "type") {
+                        // Extension-based sorting: groups files by their extension
+                        // Example order: .cpp, .hpp, .py, .txt, (no extension)
+                        auto get_ext = [](const std::string& n) -> std::string {
+                            auto pos = n.rfind('.');
+                            return pos != std::string::npos ? n.substr(pos) : "";
+                        };
+                        std::string ext_a = get_ext(a.name);
+                        std::string ext_b = get_ext(b.name);
+                        
+                        if (ext_a != ext_b) {
+                            less = ext_a < ext_b;
+                        } else {
+                            // Same extension: fall back to alphabetical
+                            less = a.name < b.name;
+                        }
+                        
+                    } else if (sort_cfg.by == "rows") {
+                        // Row count sorting (useful for data files)
+                        less = a.stats.rows < b.stats.rows;
+                        
+                    } else {
+                        // Unknown sort criterion: default to alphabetical
+                        less = a.name < b.name;
+                    }
+                    
+                    // Step 3: Apply sort direction
+                    // Flip the comparison for descending order
+                    return sort_cfg.order == "desc" ? !less : less;
+                });
+        }
+
+        // =====================================================================
+        // PHASE 3: FORMAT
+        // =====================================================================
+        // Apply configurable display templates to each sorted item.
+        // 
+        // Templates are selected based on item type:
+        // - Directory     → formats.directory   (shows item count)
+        // - Data file     → formats.data_file   (CSV/TSV/JSON - shows columns)
+        // - Text file     → formats.text_file   (shows rows and max line width)
+        // - Binary file   → formats.binary_file (shows size only)
+        // - Invalid/Error → formats.error       (name only, for permission errors)
+        //
+        // All templates support placeholder substitution via apply_template().
+        // =====================================================================
+        for (auto& item : grid_items) {
+            std::string display;
+            
+            if (item.stats.is_valid) {
+                if (item.stats.is_dir) {
+                    // DIRECTORY: Show name and child count
+                    display = apply_template(formats.directory, {
+                        {"name", item.name},
+                        {"count", std::to_string(item.stats.item_count)}
+                    });
+                } else {
+                    // FILE: Format size, then select template based on type
+                    std::string size_str = fmt_size(item.stats.size_bytes);
+
+                    if (item.stats.is_text) {
+                        std::string row_str = fmt_rows(item.stats.rows, item.stats.is_estimated);
+                        
+                        if (item.stats.is_data) {
+                            // DATA FILE (CSV/TSV/JSON): Show column count
+                            display = apply_template(formats.data_file, {
+                                {"name", item.name},
+                                {"size", size_str},
+                                {"rows", row_str},
+                                {"cols", std::to_string(item.stats.max_cols)}
+                            });
+                        } else {
+                            // TEXT FILE: Show row count and max line width
+                            display = apply_template(formats.text_file, {
+                                {"name", item.name},
+                                {"size", size_str},
+                                {"rows", row_str},
+                                {"cols", std::to_string(item.stats.max_cols)}
+                            });
+                        }
+                    } else {
+                        // BINARY FILE: Show size only
+                        display = apply_template(formats.binary_file, {
+                            {"name", item.name},
+                            {"size", size_str}
+                        });
+                    }
+                }
+            } else {
+                // INVALID/ERROR: File couldn't be analyzed (permissions, etc.)
+                display = apply_template(formats.error, {
+                    {"name", item.name}
+                });
+            }
+
+            // Append reset code to prevent color bleeding between items
+            display += Theme::RESET;
+            item.display_string = display;
+            item.visible_len = get_visible_length(display);
         }
 
         if (grid_items.empty()) return "";

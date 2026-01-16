@@ -13,20 +13,49 @@ namespace py = pybind11;
 
 namespace dais::core {
 
+    /**
+     * @brief Application configuration loaded from config.py at startup.
+     * 
+     * All fields have sensible defaults and are overwritten if config.py
+     * contains corresponding values. Some fields (ls_sort_*) can be
+     * modified at runtime via internal commands like :ls.
+     */
     struct Config {
+        /// Whether to display the [-] logo prefix on each output line.
         bool show_logo = true;
-        // Default fallbacks in case config.py fails
+        
+        /// Shell prompt patterns used to detect when shell is waiting for input.
         std::vector<std::string> shell_prompts = {"$ ", "% ", "> ", "# "};
         
-        // LS format templates (loaded from config.py, these are defaults)
+        // =====================================================================
+        // LS FORMAT TEMPLATES
+        // =====================================================================
+        // Configurable templates for 'ls' output formatting.
+        // 
         // Data placeholders: {name}, {size}, {rows}, {cols}, {count}
         // Color placeholders: {RESET}, {STRUCTURE}, {UNIT}, {VALUE}, {ESTIMATE}, {TEXT}, {SYMLINK}
-        // Note: {size} and {rows} include their own coloring (VALUE/UNIT for size, ESTIMATE for ~ prefix)
+        // 
+        // Note: {size} and {rows} include embedded coloring internally.
+        
         std::string ls_fmt_directory   = "{TEXT}{name}{STRUCTURE}/ ({VALUE}{count} {UNIT}items{STRUCTURE})";
         std::string ls_fmt_text_file   = "{TEXT}{name} {STRUCTURE}({size}{STRUCTURE}, {rows} {UNIT}R{STRUCTURE}, {VALUE}{cols} {UNIT}C{STRUCTURE})";
         std::string ls_fmt_data_file   = "{TEXT}{name} {STRUCTURE}({size}{STRUCTURE}, {rows} {UNIT}R{STRUCTURE}, {VALUE}{cols} {UNIT}C{STRUCTURE})";
         std::string ls_fmt_binary_file = "{TEXT}{name} {STRUCTURE}({size}{STRUCTURE})";
         std::string ls_fmt_error       = "{TEXT}{name}";
+        
+        // =====================================================================
+        // LS SORT OPTIONS
+        // =====================================================================
+        // Runtime-modifiable via :ls command:
+        //   :ls          - Show current settings
+        //   :ls d        - Reset to defaults  
+        //   :ls <by> [order] [dirs_first] - e.g., :ls size desc false
+        //
+        // These are loaded from config.py LS_SORT dictionary at startup.
+        
+        std::string ls_sort_by = "type";      ///< "name", "size", "type", "rows", "none"
+        std::string ls_sort_order = "asc";    ///< "asc" or "desc"
+        bool ls_dirs_first = true;            ///< Group directories before files
     };
 
     class Engine {

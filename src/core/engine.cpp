@@ -194,9 +194,17 @@ namespace dais::core {
                 }
             }
 
+            // 6. LS SORT OPTIONS
+            if (py::hasattr(conf_module, "LS_SORT")) {
+                py::dict sort = conf_module.attr("LS_SORT").cast<py::dict>();
+                if (sort.contains("by")) config_.ls_sort_by = sort["by"].cast<std::string>();
+                if (sort.contains("order")) config_.ls_sort_order = sort["order"].cast<std::string>();
+                if (sort.contains("dirs_first")) config_.ls_dirs_first = sort["dirs_first"].cast<bool>();
+            }
+
             // Debug Print
             std::cout << "[" << handlers::Theme::NOTICE << "-" << handlers::Theme::RESET 
-                      << "] Config Loaded. SHOW_LOGO = " << std::boolalpha << config_.show_logo << "\n";
+                      << "] Config loaded successfully.\n";
 
         } catch (const std::exception& e) {
             // Safe fallback if config is missing
@@ -275,7 +283,7 @@ namespace dais::core {
         running_ = true;
         
         // Rebranded Startup Message with Configured Theme
-        std::cout << "\r\n[" 
+        std::cout << "\r[" 
                   << dais::core::handlers::Theme::SUCCESS << "-" 
                   << dais::core::handlers::Theme::RESET << "]" 
                   << " DAIS has been started. Type ':q' or ':exit' to exit.\r\n" << std::flush;
@@ -292,7 +300,7 @@ namespace dais::core {
         waitpid(pty_.get_child_pid(), nullptr, 0);
         pty_.stop();
         
-        std::cout << "\r\n[" 
+        std::cout << "\r[" 
                   << dais::core::handlers::Theme::ERROR << "-" 
                   << dais::core::handlers::Theme::RESET << "]" 
                   << " Session ended.\n" << std::flush;
@@ -361,7 +369,8 @@ namespace dais::core {
                     for (ssize_t i = 0; i < bytes_read; ++i) {
                         char c = buffer[i];
                         if (at_line_start_) {
-                            if (c != '\n' && c != '\r' && config_.show_logo) {
+                            // Only show logo when shell is idle (no apps like nano/vim running)
+                            if (c != '\n' && c != '\r' && config_.show_logo && pty_.is_shell_idle()) {
                                 std::string logo_str = "[" + handlers::Theme::LOGO + "-" + handlers::Theme::RESET + "] ";
                                 write(STDOUT_FILENO, logo_str.c_str(), logo_str.size());
                                 at_line_start_ = false;
@@ -434,7 +443,10 @@ namespace dais::core {
                         data_to_write += c;
                         continue;
                     }
-
+                    // --- SMART INTERCEPTION ---
+                    // Only intercept DAIS commands when shell is IDLE (no foreground child like vim)
+                    bool shell_idle = pty_.is_shell_idle();
+                    
                     // Check for Enter key (\r or \n) indicating command submission
                     if (c == '\r' || c == '\n') {
                         // --- THREAD SAFETY: LOCK ---
@@ -444,39 +456,130 @@ namespace dais::core {
                         }
                         // ---------------------------
 
-                        // 1. Detect 'ls'
-                        if (cmd_accumulator == "ls") {
-                            // CWD FIX: Sync OS state before running ls logic
-                            sync_child_cwd(); 
+                        // Only process DAIS commands if shell is idle
+                        if (shell_idle) {
+                            // 1. Detect 'ls'
+                            if (cmd_accumulator == "ls") {
+                                // CWD FIX: Sync OS state before running ls logic
+                                sync_child_cwd(); 
 
-                            intercepting = true;
-                            // INJECTION: Append ' -1' to force single-column output.
-                            // This ensures filenames with spaces are separated by newlines,
-                            // allowing the parser to handle them correctly.
-                            data_to_write += " -1";
-                        }
+                                intercepting = true;
+                                // INJECTION: Append ' -1' to force single-column output.
+                                data_to_write += " -1";
+                            }
 
-                        // 2. Internal Exit Commands
-                        if (cmd_accumulator == ":q" || cmd_accumulator == ":exit") {
-                            running_ = false;
-                            kill(pty_.get_child_pid(), SIGHUP);
-                            return;
+                            // 2. Internal Exit Commands
+                            if (cmd_accumulator == ":q" || cmd_accumulator == ":exit") {
+                                running_ = false;
+                                kill(pty_.get_child_pid(), SIGHUP);
+                                return;
+                            }
+
+                            // 3. LS Sort Configuration Commands
+                            if (cmd_accumulator.starts_with(":ls")) {
+                                std::string args = cmd_accumulator.substr(3);
+                                // Trim leading whitespace
+                                size_t start = args.find_first_not_of(' ');
+                                if (start != std::string::npos) args = args.substr(start);
+                                else args.clear();
+                                
+                                std::string msg;
+                                if (args.empty()) {
+                                    // Show current settings
+                                    msg = "ls sort: by=" + config_.ls_sort_by + 
+                                          ", order=" + config_.ls_sort_order + 
+                                          ", dirs_first=" + (config_.ls_dirs_first ? "true" : "false");
+                                } else if (args == "d") {
+                                    // Reset to defaults
+                                    config_.ls_sort_by = "type";
+                                    config_.ls_sort_order = "asc";
+                                    config_.ls_dirs_first = true;
+                                    msg = "ls sort: by=type, order=asc, dirs_first=true (defaults)";
+                                } else {
+                                    // Parse space-separated: by [order] [dirs_first]
+                                    std::vector<std::string> parts;
+                                    std::string part;
+                                    for (char ch : args) {
+                                        if (ch == ' ') {
+                                            if (!part.empty()) { parts.push_back(part); part.clear(); }
+                                        } else {
+                                            part += ch;
+                                        }
+                                    }
+                                    if (!part.empty()) parts.push_back(part);
+                                    
+                                    if (parts.size() >= 1) {
+                                        const auto& by = parts[0];
+                                        if (by == "name" || by == "size" || by == "type" || by == "rows" || by == "none") {
+                                            config_.ls_sort_by = by;
+                                        }
+                                    }
+                                    if (parts.size() >= 2) {
+                                        const auto& order = parts[1];
+                                        if (order == "asc" || order == "desc") {
+                                            config_.ls_sort_order = order;
+                                        }
+                                    }
+                                    if (parts.size() >= 3) {
+                                        const auto& dirs = parts[2];
+                                        if (dirs == "true" || dirs == "1") {
+                                            config_.ls_dirs_first = true;
+                                        } else if (dirs == "false" || dirs == "0") {
+                                            config_.ls_dirs_first = false;
+                                        }
+                                    }
+                                    
+                                    msg = "ls sort: by=" + config_.ls_sort_by + 
+                                          ", order=" + config_.ls_sort_order + 
+                                          ", dirs_first=" + (config_.ls_dirs_first ? "true" : "false");
+                                }
+                                
+                                // Print feedback and new prompt
+                                std::cout << "\r\n[" << handlers::Theme::NOTICE << "-" << handlers::Theme::RESET 
+                                          << "] " << msg << "\r\n" << std::flush;
+                                
+                                cmd_accumulator.clear();
+                                // Send just newline to trigger a new prompt
+                                write(pty_.get_master_fd(), "\n", 1);
+                                continue;
+                            }
                         }
 
                         trigger_python_hook("on_command", cmd_accumulator);
                         cmd_accumulator.clear();
+                        data_to_write += c;
                     }
                     // Handle Backspace
                     else if (c == 127 || c == '\b') {
-                        if (!cmd_accumulator.empty()) cmd_accumulator.pop_back();
+                        // LOCAL BACKSPACE ECHO for DAIS commands
+                        if (shell_idle && cmd_accumulator.starts_with(":")) {
+                            if (!cmd_accumulator.empty()) {
+                                cmd_accumulator.pop_back();
+                                // Erase character visually: backspace, space, backspace
+                                std::cout << "\b \b" << std::flush;
+                            }
+                            // Don't send to shell
+                        } else {
+                            if (!cmd_accumulator.empty()) cmd_accumulator.pop_back();
+                            data_to_write += c;
+                        }
                     }
-                    // Accumulate only printable characters
+                    // Regular character
                     else if (std::isprint(static_cast<unsigned char>(c))) {
                         cmd_accumulator += c;
+                        
+                        // LOCAL ECHO for DAIS commands (starts with ':' when shell idle)
+                        // We echo locally so user sees what they type, but don't send to shell
+                        if (shell_idle && cmd_accumulator.starts_with(":")) {
+                            std::cout << c << std::flush;
+                        } else {
+                            data_to_write += c;
+                        }
                     }
-
-                    // Append the actual character to the outgoing stream
-                    data_to_write += c;
+                    // Non-printable (control chars, etc.) - always pass through
+                    else {
+                        data_to_write += c;
+                    }
                 }
                 
                 // Write to PTY Master (Input to Shell)
@@ -530,7 +633,13 @@ namespace dais::core {
             formats.binary_file = config_.ls_fmt_binary_file;
             formats.error = config_.ls_fmt_error;
             
-            processed_content = handlers::handle_ls(content_payload, shell_cwd_, formats);
+            // Build LSSortConfig from config
+            handlers::LSSortConfig sort_cfg;
+            sort_cfg.by = config_.ls_sort_by;
+            sort_cfg.order = config_.ls_sort_order;
+            sort_cfg.dirs_first = config_.ls_dirs_first;
+            
+            processed_content = handlers::handle_ls(content_payload, shell_cwd_, formats, sort_cfg);
         } else {
             processed_content = handlers::handle_generic(content_payload);
         }

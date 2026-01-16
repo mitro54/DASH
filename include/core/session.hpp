@@ -25,6 +25,19 @@ namespace dais::core {
         // Getters
         [[nodiscard]] int get_master_fd() const { return master_fd_; }
         [[nodiscard]] pid_t get_child_pid() const { return child_pid_; }
+        
+        /**
+         * @brief Checks if the shell is idle (at prompt, no foreground child).
+         * Uses tcgetpgrp to get the foreground process group of the PTY.
+         * If it matches the shell's PID, no child (vim, python, etc.) is running.
+         * @return true if shell is idle, false if a child process is in foreground
+         */
+        [[nodiscard]] bool is_shell_idle() const {
+            pid_t fg_pgrp = tcgetpgrp(master_fd_);
+            // If fg_pgrp matches the shell's process group, shell is idle
+            // getpgid(child_pid_) gets the shell's process group
+            return fg_pgrp == getpgid(child_pid_);
+        }
 
     private:
         int master_fd_;

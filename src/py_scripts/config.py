@@ -54,6 +54,21 @@ DATA_EXTENSIONS = [
 ]
 
 # ==================================================================================
+# LS SORTING
+# ==================================================================================
+# Configure how 'ls' output is sorted.
+# Runtime commands:
+#   :ls                     - Show current settings
+#   :ls [by] [order] [dirs] - Change settings (e.g., :ls rows desc false)
+#   :ls d                   - Reset to defaults
+
+LS_SORT = {
+    "by": "type",        # "name", "size", "type", "rows", "none"
+    "order": "asc",      # "asc" or "desc"
+    "dirs_first": True   # Group directories before files
+}
+
+# ==================================================================================
 # LS OUTPUT FORMATTING
 # ==================================================================================
 # Customize how 'ls' output is displayed using format templates.
