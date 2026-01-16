@@ -57,8 +57,6 @@ PYBIND11_EMBEDDED_MODULE(dais, m) {
 namespace dais::core {
 
     constexpr size_t BUFFER_SIZE = 4096;
-    std::atomic<bool> running_{false};
-    std::atomic<bool> intercepting{false};
 
     Engine::Engine() {}
     

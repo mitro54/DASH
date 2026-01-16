@@ -118,9 +118,10 @@ namespace dais::core {
         
         // Subtract 4 columns to reserve space for the logo.
         // Safety check: ensure we don't underflow if the window is tiny.
-        if (show_logo)
+        if (show_logo) {
             if (cols > 4) cols -= 4;
             else cols = 1;
+        }
         unsigned short safe_cols = cols;
         ws.ws_col = static_cast<unsigned short>(safe_cols);
         

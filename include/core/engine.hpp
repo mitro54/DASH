@@ -45,7 +45,7 @@ namespace dais::core {
 
         // modifying output
         std::string pending_output_buffer_;
-        bool intercepting = false;
+        std::atomic<bool> intercepting{false};
         std::string process_output(std::string_view raw_output);
 
         // python state
