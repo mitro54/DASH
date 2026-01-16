@@ -11,8 +11,8 @@
 - running it in any new environment sets up all the same tools ready to use (or equivalents if not available).
 - allow auto-save to git (needs some user setup)
 - add possibility for a config file so users could choose settings on/off etc
-- ls could have different styles of formatting on demand
 - referencing 1st user story, the possibility for listing installs easily to the config.py
+- add different types of sorting/formatting to ls based on config / user input
 
 ## Feature ideas (if AI enabled)
 - Suggest fixes to bad commands
