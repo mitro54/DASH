@@ -26,6 +26,7 @@
 #include <cerrno>      // errno
 #include <sys/ioctl.h> // TIOCGWINSZ
 #include <unistd.h>    // STDOUT_FILENO
+#include <format>
 
 // --- OS Specific Includes for CWD Sync ---
 // We need low-level OS headers to inspect the child process's state directly.
