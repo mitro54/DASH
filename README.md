@@ -12,12 +12,15 @@
 - **Zero-Latency PTY**: Seamless shell wrapping with native C++ performance.
 - **Python Plugin System**: Extend functionality using standard Python scripts
 - **Smart `ls` Command**:
+    - **Adaptive Performance**: Uses parallel processing for near instant analysis of large directories
     - **Data-Aware**: Automatically detects CSV/TSV/JSON files and displays column counts
     - **Text Insights**: Shows line counts and max line width for code/text files
     - **Configurable Sorting**: Sort output by name, size, type, or row count (`:ls size desc`)
     - **Fully Configurable**: Define your own output templates, icons, and colors
-    - **Custom File Types**: Configure which extensions count as "text" or "data"
-- **Smart Interception**: DAIS commands only work at the shell prompt—vim, nano, and other apps run unaffected
+- **Compatibility**:
+    - **Configurable Prompt Detection**: Supports standard prompts out-of-box, adjustable for anything else via config
+    - **Shell-Ready**: Handles special filenames (spaces, quotes, emojis) correctly
+- **Smart Interception**: DAIS commands only work at the shell prompt: vim, nano, and other apps run unaffected
 
 ### Runtime Commands
 | Command | Description |

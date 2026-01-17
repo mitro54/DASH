@@ -387,8 +387,8 @@ namespace dais::core {
                             prompt_buffer.clear();  // Reset on newline
                         } else {
                             prompt_buffer += c;
-                            if (prompt_buffer.size() > 20) {
-                                prompt_buffer = prompt_buffer.substr(prompt_buffer.size() - 20);
+                            if (prompt_buffer.size() > 100) {
+                                prompt_buffer = prompt_buffer.substr(prompt_buffer.size() - 100);
                             }
                         }
                     }

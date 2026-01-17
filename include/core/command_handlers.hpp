@@ -132,9 +132,8 @@ namespace dais::core::handlers {
 
     /**
      * @brief Cleans a filename of invisible artifacts.
-     * * Combines ANSI stripping with trimming of non-printable characters (whitespace, 
-     * carriage returns) from the start and end of the string.
-     * * @param raw The raw line captured from stdout.
+     * Combines ANSI stripping, trimming, and shell quote/escape handling.
+     * @param raw The raw line captured from stdout.
      * @return A clean, filesystem-ready filename string.
      */
     inline std::string clean_filename(const std::string& raw) {
@@ -150,7 +149,47 @@ namespace dais::core::handlers {
             return std::isgraph(ch);
         }).base(), clean.end());
 
-        return clean;
+        // Handle shell quoting: 'name' or "name"
+        // ls -1 quotes filenames with special characters
+        if (clean.size() >= 2) {
+            char first = clean.front();
+            char last = clean.back();
+            
+            // Single quoted: 'filename with spaces'
+            if (first == '\'' && last == '\'') {
+                clean = clean.substr(1, clean.size() - 2);
+            }
+            // Double quoted: "filename'with'internal'quotes"
+            else if (first == '"' && last == '"') {
+                clean = clean.substr(1, clean.size() - 2);
+            }
+        }
+        
+        // Handle backslash escapes (e.g., folder\ with\ spaces or folder\$dollar)
+        std::string unescaped;
+        unescaped.reserve(clean.size());
+        for (size_t i = 0; i < clean.size(); ++i) {
+            if (clean[i] == '\\' && i + 1 < clean.size()) {
+                char next = clean[i + 1];
+                // Common shell escapes - just use the literal next char
+                if (next == ' ' || next == '\'' || next == '"' || 
+                    next == '$' || next == '&' || next == '(' || 
+                    next == ')' || next == '[' || next == ']' ||
+                    next == '!' || next == '#' || next == '%' ||
+                    next == '\\' || next == 't' || next == 'n') {
+                    // For \t and \n in filenames, keep as literal 't' and 'n'
+                    // (actual tab/newline chars in filenames are rare)
+                    unescaped += next;
+                    ++i; // Skip the escaped char
+                } else {
+                    unescaped += clean[i]; // Keep backslash if not a known escape
+                }
+            } else {
+                unescaped += clean[i];
+            }
+        }
+        
+        return unescaped;
     }
 
     // ==================================================================================
@@ -294,8 +333,8 @@ namespace dais::core::handlers {
      * 
      * Logic Flow:
      * 1. Parse Input: Reads the raw string line-by-line (relies on engine injecting 'ls -1').
-     * 2. Clean: Removes ANSI codes and whitespace artifacts to get valid filenames.
-     * 3. Analyze: Uses 'file_analyzer' to get metadata (size, rows, type).
+     * 2. Clean: Removes ANSI codes, whitespace, and handles shell-quoted filenames.
+     * 3. Analyze: Parallel execution using ThreadPool to get metadata (size, rows, type).
      * 4. Sort: Applies user-configured sorting (uses std::sort - O(n log n) introsort).
      * 5. Format: Uses configurable templates to structure output.
      * 6. Layout: Arranges items into a responsive grid that fits the terminal width.
@@ -304,6 +343,7 @@ namespace dais::core::handlers {
      * @param cwd The current working directory (needed to resolve relative filenames).
      * @param formats The format templates loaded from config (or defaults).
      * @param sort_cfg The sorting configuration.
+     * @param pool Reference to the engine's singleton ThreadPool for parallel analysis.
      * @return The formatted, colorized grid string.
      */
     inline std::string handle_ls(

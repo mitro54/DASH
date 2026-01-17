@@ -14,7 +14,8 @@ SHELL_PROMPTS = [
     "% ",  # Zsh default
     "> ",  # Python / Windows default
     "# ",  # Root default
-    "➜ "   # Starship / Oh-My-Zsh common arrow
+    "➜ ",  # Starship / Oh-My-Zsh common arrow
+    "❯ "   # Starship / Oh-My-Zsh common arrow
 ]
 
 # Centralized Color Palette (ANSI Escape Codes)

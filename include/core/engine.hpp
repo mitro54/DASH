@@ -28,7 +28,7 @@ namespace dais::core {
         bool show_logo = true;
         
         /// Shell prompt patterns used to detect when shell is waiting for input.
-        std::vector<std::string> shell_prompts = {"$ ", "% ", "> ", "# "};
+        std::vector<std::string> shell_prompts = {"$ ", "% ", "> ", "# ", "➜ ", "❯ "};
         
         // =====================================================================
         // LS FORMAT TEMPLATES
@@ -115,8 +115,8 @@ namespace dais::core {
         // =====================================================================
         // SHELL STATE (Prompt-Based Detection)
         // =====================================================================
-        // Track shell state based on events, not syscalls.
-        // IDLE = at prompt, RUNNING = command executing or app running.
+        // Track shell state based on events.
+        // IDLE = at prompt (matches shell_prompts config), RUNNING = command executing.
         
         enum class ShellState { IDLE, RUNNING };
         std::atomic<ShellState> shell_state_{ShellState::IDLE};
