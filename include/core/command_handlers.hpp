@@ -292,21 +292,15 @@ namespace dais::core::handlers {
      */
     struct LSArgs {
         bool show_hidden = false;   ///< -a or --all flag
-        bool long_format = false;   ///< -l flag (reserved for future)
+        bool supported = true;      ///< If false, flags are too complex for native ls
         std::vector<std::string> paths;  ///< Target directories/files
     };
     
     /**
      * @brief Parses ls command arguments from user input.
-     * 
-     * Examples:
-     *   "ls"           -> paths=[""], show_hidden=false
-     *   "ls -a"        -> paths=[""], show_hidden=true
-     *   "ls /tmp"      -> paths=["/tmp"], show_hidden=false
-     *   "ls -a . /tmp" -> paths=[".", "/tmp"], show_hidden=true
-     * 
-     * @param input Full command string (e.g., "ls -a /tmp")
-     * @return Parsed LSArgs struct
+     * Identifies if the command can be handled natively.
+     * Only supports: ls, ls -a, ls --all, and paths.
+     * Anything else (e.g., -l, -R, -t) marks supported=false.
      */
     inline LSArgs parse_ls_args(const std::string& input) {
         LSArgs args;
@@ -316,18 +310,16 @@ namespace dais::core::handlers {
         iss >> token; // Skip "ls" command itself
         
         while (iss >> token) {
-            if (token == "-a" || token == "--all" || token == "-la" || token == "-al") {
+            if (token == "-a" || token == "--all") {
                 args.show_hidden = true;
-                if (token == "-la" || token == "-al") {
-                    args.long_format = true;
-                }
-            } else if (token == "-l") {
-                args.long_format = true;
-            } else if (token[0] != '-') {
-                // It's a path argument
+            } else if (token.starts_with("-")) {
+                // Any other flag (-l, -R, -t, etc.) is not supported natively.
+                // We mark it as unsupported so the engine falls back to the shell.
+                args.supported = false;
+                return args; 
+            } else {
                 args.paths.push_back(token);
             }
-            // Unknown flags are silently ignored
         }
         
         // Default to current directory if no paths specified

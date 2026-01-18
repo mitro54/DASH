@@ -622,6 +622,7 @@ namespace dais::core {
                                 // Parse arguments
                                 auto ls_args = handlers::parse_ls_args(cmd_accumulator);
                                 
+                                if (ls_args.supported) {
                                 // Build format/sort config from current settings
                                 handlers::LSFormats formats;
                                 formats.directory = config_.ls_fmt_directory;
@@ -654,7 +655,8 @@ namespace dais::core {
                                 // Clear accumulator and skip writing command to PTY
                                 cmd_accumulator.clear();
                                 at_line_start_ = false; // Prompt will handle this
-                                continue; // Skip the normal PTY write below
+                                    continue; // Skip the normal PTY write below
+                                }
                             }
 
                             // 2. Internal Exit Commands
