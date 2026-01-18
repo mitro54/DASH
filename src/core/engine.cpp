@@ -21,7 +21,6 @@
 #include <sys/wait.h>
 #include <filesystem>
 #include <atomic>
-#include <iomanip> // for std::boolalpha
 #include <mutex>
 #include <cerrno>      // errno
 #include <sys/ioctl.h> // TIOCGWINSZ
@@ -392,39 +391,87 @@ namespace dais::core {
                         std::string modified = process_output(pending_output_buffer_);
                         write(STDOUT_FILENO, modified.c_str(), modified.size());
                         
+                        // The prompt we wrote already has a logo - don't let pass-through inject another
+                        at_line_start_ = false;
+                        
                         intercepting = false;
                         pending_output_buffer_.clear();
                     }
                 } 
                 // --- PASS-THROUGH MODE ---
                 else {
-                    // Track last few chars for prompt detection
-                    static std::string prompt_buffer;
+                    // Forward shell output to terminal with optional logo injection.
+                    // Uses class members prompt_buffer_ and pass_through_esc_state_ for state.
                     
                     for (ssize_t i = 0; i < bytes_read; ++i) {
                         char c = buffer[i];
-                        if (at_line_start_) {
-                            // Only show logo when shell is idle (no apps like nano/vim running)
-                            if (c != '\n' && c != '\r' && config_.show_logo && pty_.is_shell_idle()) {
-                                std::string logo_str = handlers::Theme::RESET + "[" + handlers::Theme::LOGO + "-" + handlers::Theme::RESET + "] ";
-                                write(STDOUT_FILENO, logo_str.c_str(), logo_str.size());
-                                at_line_start_ = false;
+                        
+                        // For complex shells, we use delayed logo injection with escape sequence tracking.
+                        // 
+                        //    Fish: Prompt rendering is highly complex (RPROMPT, dynamic redraws, cursor jumps).
+                        //    Attempting to inject a logo mid-stream often corrupts visual state.
+                        //    Decision: Skip pass-through logo injection for Fish entirely.
+                        //
+                        //    Zsh: Uses ANSI escape sequences heavily for themes. We must NOT inject
+                        //    the logo inside an escape sequence (e.g., between \x1b and m).
+                        //    Decision: Use a state machine to track ANSI sequences and only inject
+                        //    when fully outside a sequence and seeing printable content.
+                        //
+                        //    Bash/Sh: Simpler prompts. Inject immediately at line start.
+                        
+                        if (is_complex_shell_ && !is_fish_) {
+                            // Zsh: Delayed logo injection with ANSI escape sequence tracking.
+                            // State machine: 0=text, 1=ESC, 2=CSI, 3=OSC, 4=Charset
+                            
+                            if (pass_through_esc_state_ == 1) {
+                                if (c == '[') pass_through_esc_state_ = 2;
+                                else if (c == ']') pass_through_esc_state_ = 3;
+                                else if (c == '(' || c == ')') pass_through_esc_state_ = 4;
+                                else pass_through_esc_state_ = 0;
+                            } else if (pass_through_esc_state_ == 2) {
+                                if (std::isalpha(static_cast<unsigned char>(c))) pass_through_esc_state_ = 0;
+                            } else if (pass_through_esc_state_ == 3) {
+                                if (c == '\x07') pass_through_esc_state_ = 0;
+                            } else if (pass_through_esc_state_ == 4) {
+                                pass_through_esc_state_ = 0;
+                            } else if (c == '\x1b') {
+                                pass_through_esc_state_ = 1;
+                            } else if (at_line_start_ && config_.show_logo && pty_.is_shell_idle()) {
+                                if (c >= 33 && c < 127) {
+                                    std::string logo_str = handlers::Theme::RESET + "[" + handlers::Theme::LOGO + "-" + handlers::Theme::RESET + "] ";
+                                    write(STDOUT_FILENO, logo_str.c_str(), logo_str.size());
+                                    at_line_start_ = false;
+                                }
+                            }
+                        } else if (!is_complex_shell_) {
+                            // Simple shells: inject immediately
+                            if (at_line_start_) {
+                                if (c != '\n' && c != '\r' && config_.show_logo && pty_.is_shell_idle()) {
+                                    std::string logo_str = handlers::Theme::RESET + "[" + handlers::Theme::LOGO + "-" + handlers::Theme::RESET + "] ";
+                                    write(STDOUT_FILENO, logo_str.c_str(), logo_str.size());
+                                    at_line_start_ = false;
+                                }
                             }
                         }
+                        
                         write(STDOUT_FILENO, &c, 1);
+                        
                         if (c == '\n') {
                             at_line_start_ = true;
-                            prompt_buffer.clear();  // Reset on newline
+                            prompt_buffer_.clear();
                         } else if (c == '\r') {
-                            // Complex shells (Zsh, Fish) use \r for redraws/autosuggestions, so we ignore it.
-                            // Simple shells (Bash, Sh) use \r\n or \r for prompts, so we MUST handle it.
+                            // For complex shells, \r means "back to line start" - keep waiting for content
+                            // For simple shells, \r often means new prompt line
                             if (!is_complex_shell_) {
                                 at_line_start_ = true;
                             }
-                        } else {
-                            prompt_buffer += c;
-                            if (prompt_buffer.size() > 100) {
-                                prompt_buffer = prompt_buffer.substr(prompt_buffer.size() - 100);
+                        } else if (c >= 32 && c < 127) {
+                            // Regular printable char
+                            if (!is_complex_shell_ || !at_line_start_) {
+                                prompt_buffer_ += c;
+                                if (prompt_buffer_.size() > 100) {
+                                    prompt_buffer_ = prompt_buffer_.substr(prompt_buffer_.size() - 100);
+                                }
                             }
                         }
                     }
@@ -432,8 +479,8 @@ namespace dais::core {
                     // --- PROMPT DETECTION: Set state to IDLE ---
                     // Check if output ends with a known shell prompt
                     for (const auto& prompt : config_.shell_prompts) {
-                        if (prompt_buffer.size() >= prompt.size() &&
-                            prompt_buffer.substr(prompt_buffer.size() - prompt.size()) == prompt) {
+                        if (prompt_buffer_.size() >= prompt.size() &&
+                            prompt_buffer_.substr(prompt_buffer_.size() - prompt.size()) == prompt) {
                             shell_state_ = ShellState::IDLE;
                             break;
                         }
@@ -939,49 +986,61 @@ namespace dais::core {
                 // "[-] PROMPT" -> works if PROMPT doesn't start with \r
                 
                 // If line isn't empty, inject logo
+                // If line isn't empty, inject logo
                 if (!line.empty()) {
-                    // Smart Logo Injection
-                    // Complex shells (Fish, Zsh) often redraw the prompt by:
-                    // 1. Moving cursor to start (\r)
-                    // 2. Clearing the line (\x1b[2K)
-                    // We must inject the logo AFTER these resets, otherwise it gets wiped.
+                    // SMART LOGO INJECTION STRATEGY
+                    // 
+                    // When re-attaching the prompt after an intercepted command (ls),
+                    // we must be careful where we insert the logo.
+                    //
+                    // 1. Zsh/Bash: Often use leading \r to reset cursor or spaces for alignment.
+                    //    If we prepend logo at 0, \r will overwrite it.
+                    //    We scan past \r, spaces, and ANSI codes to inject *before* visible text.
+                    //
+                    // 2. Fish: Skipped entirely here to avoid corruption. Fish's prompt is
+                    //    handled by its own quirks or left bare to ensure stability.
                     
                     size_t inject_pos = 0;
                     
-                    if (is_complex_shell_) {
-                        // Find the last carriage return
-                        size_t last_cr = line.rfind('\r');
-                        if (last_cr != std::string::npos) {
-                            inject_pos = last_cr + 1; // After \r
+                    // Skip leading \r, spaces, and ANSI codes to inject before visible content
+                    size_t i = 0;
+                    while (i < line.size()) {
+                        unsigned char c = line[i];
+                        if (c == '\r' || c == ' ') {
+                            i++;
+                        } else if (c == '\x1b' && i + 1 < line.size()) {
+                            // Skip ANSI escape sequence
+                            i++;
+                            if (line[i] == '[') {
+                                i++;
+                                while (i < line.size() && !std::isalpha((unsigned char)line[i])) i++;
+                                if (i < line.size()) i++; // Skip terminator
+                            } else if (line[i] == '(' || line[i] == ')') {
+                                i += 2; // Charset selection
+                            } else {
+                                i++;
+                            }
+                        } else {
+                            break; // Found printable content
                         }
-                        
-                        // Find the last "Clear Entire Line" sequence (\x1b[2K)
-                        // It overrides \r because it clears everything.
-                        size_t last_2k = line.rfind("\x1b[2K");
-                        if (last_2k != std::string::npos) {
-                             if (last_2k + 4 > inject_pos) {
-                                 inject_pos = last_2k + 4;
-                             }
-                        }
-                    } else {
-                         // Simple shells: Inject at start (ignore \r to prevent partial overwrites)
-                         // But we still want to respect if the prompt explicitly starts with \r
-                         if (line.starts_with('\r')) {
-                             inject_pos = line.find_first_not_of('\r');
-                             if (inject_pos == std::string::npos) inject_pos = 0;
-                         }
                     }
+                    inject_pos = i;
 
-                    if (inject_pos > 0 && inject_pos < line.size()) {
+                    if (is_fish_) {
+                        // Fish prompt is too complex for consistent injection.
+                        // Skip logo to avoid corruption (same as pass-through mode).
+                        final_output += line;
+                    } else if (inject_pos > 0 && inject_pos < line.size()) {
+                        // Logo goes in the middle (after reset sequences, before content)
                         final_output += line.substr(0, inject_pos);
                         final_output += logo_str;
                         final_output += line.substr(inject_pos);
                     } else if (inject_pos == line.size()) {
-                        // Reset is at end of line (weird but possible) - append logo
+                        // No visible ASCII content found
+                        // Skip logo here; the real prompt will come through forward_shell_output.
                         final_output += line;
-                        final_output += logo_str;
                     } else {
-                        // Start of line
+                        // inject_pos == 0: Content starts at beginning
                         final_output += logo_str;
                         final_output += line;
                     }

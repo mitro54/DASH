@@ -81,18 +81,24 @@ namespace dais::core {
         Config config_;
         std::filesystem::path shell_cwd_ = std::filesystem::current_path();
 
-        // Track the active command string (e.g., "ls", "git status")
-        // Detect complex shells (Zsh, Fish) to handle prompt quirks (redraws using \r)
-        // - is_complex_shell_: Enables generic fixes for prompts that redraw/move cursor (Zsh/Fish)
-        // - is_fish_: Enables aggressive fixes for Fish-specific aliases and quirks
+        // --- SHELL DETECTION (set once in constructor, read-only after) ---
+        // These flags control shell-specific compatibility workarounds.
+        // - is_complex_shell_: True for Zsh/Fish. Enables delayed logo injection after escapes.
+        // - is_fish_: True for Fish only. Disables pass-through logo injection entirely.
         bool is_complex_shell_ = false;
         bool is_fish_ = false;
+        
+        // Active command being intercepted (protected by state_mutex_)
         std::string current_command_;
         
         // --- THREAD SAFETY ---
         std::mutex state_mutex_;
 
-        // modifying output
+        // --- PASS-THROUGH MODE STATE (only accessed from forward_shell_output thread) ---
+        std::string prompt_buffer_;            ///< Last ~100 chars for prompt detection
+        int pass_through_esc_state_ = 0;       ///< ANSI escape sequence state machine (0=normal)
+        
+        // --- INTERCEPTION STATE ---
         std::string pending_output_buffer_;
         std::atomic<bool> intercepting{false};
         std::string process_output(std::string_view raw_output);
