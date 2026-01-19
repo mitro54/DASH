@@ -687,11 +687,11 @@ namespace dais::core {
                                     config_.ls_dirs_first = true;
                                     msg = "ls sort: by=type, order=asc, dirs_first=true (defaults)";
                                 } else {
-                                    // Parse space-separated: by [order] [dirs_first]
+                                    // Flexible parsing: iterate over all parts and match keywords
                                     std::vector<std::string> parts;
                                     std::string part;
                                     for (char ch : args) {
-                                        if (ch == ' ') {
+                                        if (ch == ' ' || ch == ',') {
                                             if (!part.empty()) { parts.push_back(part); part.clear(); }
                                         } else {
                                             part += ch;
@@ -699,23 +699,20 @@ namespace dais::core {
                                     }
                                     if (!part.empty()) parts.push_back(part);
                                     
-                                    if (parts.size() >= 1) {
-                                        const auto& by = parts[0];
-                                        if (by == "name" || by == "size" || by == "type" || by == "rows" || by == "none") {
-                                            config_.ls_sort_by = by;
+                                    for (const auto& p : parts) {
+                                        // 1. Sort By
+                                        if (p == "name" || p == "size" || p == "type" || p == "rows" || p == "none") {
+                                            config_.ls_sort_by = p;
                                         }
-                                    }
-                                    if (parts.size() >= 2) {
-                                        const auto& order = parts[1];
-                                        if (order == "asc" || order == "desc") {
-                                            config_.ls_sort_order = order;
+                                        // 2. Sort Order
+                                        else if (p == "asc" || p == "desc") {
+                                            config_.ls_sort_order = p;
                                         }
-                                    }
-                                    if (parts.size() >= 3) {
-                                        const auto& dirs = parts[2];
-                                        if (dirs == "true" || dirs == "1") {
+                                        // 3. Dirs First
+                                        else if (p == "true" || p == "1") {
                                             config_.ls_dirs_first = true;
-                                        } else if (dirs == "false" || dirs == "0") {
+                                        }
+                                        else if (p == "false" || p == "0") {
                                             config_.ls_dirs_first = false;
                                         }
                                     }
