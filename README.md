@@ -44,13 +44,30 @@ Beyond the visuals, DAIS is built for performance and extensibility.
 - **Smart Interception**: DAIS commands only work at the shell prompt: vim, nano, and other apps run unaffected
 
 ### Runtime Commands
+
+#### File Listing Configuration (`:ls`)
+Configure how the `ls` command displays files. Arguments can be provided in any order, separated by spaces or commas.
+
+**Parameters:**
+- **Sort Field**: `name`, `size`, `type`, `rows`, `none`
+- **Order**: `asc`, `desc`
+- **Group Directories**: `true` (dirs first), `false` (mixed)
+- **Reset**: `d` or `default` (reset to config defaults)
+
+**Examples:**
+| Command | Effect |
+|---------|--------|
+| `:ls` | Show current settings |
+| `:ls size desc` | Sort by size, descending |
+| `:ls type, asc` | Sort by type, ascending (comma separated) |
+| `:ls false` | Disable "directories first" grouping |
+| `:ls d` | Reset to defaults |
+
+#### History & System
 | Command | Description |
 |---------|-------------|
-| `:ls` | Show current sort settings |
-| `:ls size desc false` | Sort by size, descending, dirs mixed with files |
-| `:ls d` | Reset sort to defaults |
 | `:history` | Show last 20 commands |
-| `:history n` | Show last n commands |
+| `:history <n>` | Show last n commands |
 | `:history clear` | Clear command history |
 | `:q` or `:exit` | Exit DAIS |
 
