@@ -36,7 +36,7 @@ Beyond the visuals, DAIS is built for performance and extensibility.
     - **Data-Aware**: Automatically detects CSV/TSV/JSON files and displays column counts
     - **Text Insights**: Shows line counts and max line width for code/text files
     - **Configurable Sorting**: Sort output by name, size, type, or row count (`:ls size desc`)
-    - **Fully Configurable**: Define your own output templates, icons, and colors
+    - **Fully Configurable**: Define your own output templates, icons, and colors, from config.py
 - **Compatibility**:
     - **Configurable Prompt Detection**: Automatically handles complex prompts (multi-line, colored, autosuggestions), supporting most standard prompts out-of-box, adjustable for anything else via config
     - **Shell Support**: Tested on **Bash**, **Zsh**, and **Fish**
@@ -67,7 +67,7 @@ Configure how the `ls` command displays files. Arguments can be provided in any 
 | Command | Description |
 |---------|-------------|
 | `:history` | Show last 20 commands |
-| `:history <n>` | Show last n commands |
+| `:history n` | Show last n commands |
 | `:history clear` | Clear command history |
 | `:q` or `:exit` | Exit DAIS |
 
