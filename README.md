@@ -37,6 +37,7 @@ Beyond the visuals, DAIS is built for performance and extensibility.
     - **Text Insights**: Shows line counts and max line width for code/text files
     - **Configurable Sorting**: Sort output by name, size, type, or row count (`:ls size desc`)
     - **Fully Configurable**: Define your own output templates, icons, and colors, from config.py
+    - **Flexible Usage**: Styling applies seamlessly to `ls -a` (hidden files) and `ls /absolute/path`
 - **Compatibility**:
     - **Configurable Prompt Detection**: Automatically handles complex prompts (multi-line, colored, autosuggestions), supporting most standard prompts out-of-box, adjustable for anything else via config
     - **Shell Support**: Tested on **Bash**, **Zsh**, and **Fish**
