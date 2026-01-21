@@ -284,6 +284,110 @@ namespace dais::core {
 #endif
     }
 
+    /**
+     * @brief Resolves a partial path to a complete path using aggressive fuzzy matching.
+     * 
+     * Handles the case where tab completion created a concatenated string like "/mndwin"
+     * from "/mnt" + "d" + "wincplusplus". Uses recursive backtracking to try all possible
+     * split points and find valid directory matches.
+     * 
+     * Example: "/mndwin" -> tries "/m" in /, then "ndwin" in /mnt -> finds /mnt/d/wincplusplus
+     * 
+     * @param partial The incomplete/concatenated path from the accumulator
+     * @param cwd Current working directory for relative path resolution
+     * @return Resolved path if successful, empty path if resolution failed
+     */
+    std::filesystem::path Engine::resolve_partial_path(
+        const std::string& partial, 
+        const std::filesystem::path& cwd
+    ) {
+        namespace fs = std::filesystem;
+        
+        if (partial.empty()) return cwd;
+        
+        // Helper lambda for case-insensitive prefix matching
+        auto starts_with_ci = [](const std::string& str, const std::string& prefix) -> bool {
+            if (str.size() < prefix.size()) return false;
+            for (size_t i = 0; i < prefix.size(); ++i) {
+                if (std::tolower(str[i]) != std::tolower(prefix[i])) return false;
+            }
+            return true;
+        };
+        
+        // Recursive helper to find path from current directory and remaining string
+        std::function<fs::path(const fs::path&, const std::string&, int)> find_path;
+        find_path = [&](const fs::path& current, const std::string& remaining, int depth) -> fs::path {
+            // Base case: nothing left to match
+            if (remaining.empty()) {
+                return current;
+            }
+            
+            // Depth limit to prevent infinite recursion
+            if (depth > 50) return {};
+            
+            // Must be at a valid directory
+            if (!fs::exists(current) || !fs::is_directory(current)) {
+                return {};
+            }
+            
+            // Collect directory entries
+            std::vector<std::pair<std::string, fs::path>> entries;
+            try {
+                for (const auto& entry : fs::directory_iterator(current)) {
+                    entries.push_back({entry.path().filename().string(), entry.path()});
+                }
+            } catch (...) {
+                return {}; // Permission error
+            }
+            
+            // Try matching increasingly long prefixes of 'remaining' against entries
+            // Start with longer prefixes (more specific matches first)
+            for (size_t len = std::min(remaining.size(), static_cast<size_t>(256)); len >= 1; --len) {
+                std::string prefix = remaining.substr(0, len);
+                
+                for (const auto& [name, path] : entries) {
+                    if (starts_with_ci(name, prefix)) {
+                        // Found a potential match - try to resolve the rest
+                        std::string rest = remaining.substr(len);
+                        
+                        // If entry is a directory, recurse into it
+                        if (fs::is_directory(path)) {
+                            auto result = find_path(path, rest, depth + 1);
+                            if (!result.empty()) {
+                                return result;
+                            }
+                        } else if (rest.empty()) {
+                            // It's a file and we've consumed all input
+                            return path;
+                        }
+                    }
+                }
+            }
+            
+            return {}; // No match found
+        };
+        
+        // Determine starting point and clean the path string
+        std::string path_str = partial;
+        fs::path start_dir;
+        
+        if (!path_str.empty() && (path_str[0] == '/' || path_str[0] == '\\')) {
+            // Absolute path - start from root
+            start_dir = "/";
+            path_str = path_str.substr(1); // Remove leading slash
+        } else {
+            // Relative path - start from CWD
+            start_dir = cwd;
+        }
+        
+        // Remove trailing slashes
+        while (!path_str.empty() && (path_str.back() == '/' || path_str.back() == '\\')) {
+            path_str.pop_back();
+        }
+        
+        return find_path(start_dir, path_str, 0);
+    }
+
     // ==================================================================================
     // MAIN LOOP
     // ==================================================================================
@@ -356,6 +460,22 @@ namespace dais::core {
                 // Forward shell output to terminal with optional logo injection.
                 // Uses class members prompt_buffer_ and pass_through_esc_state_ for state.
                 
+                // --- LOOK-AHEAD PROMPT DETECTION ---
+                // Check if this buffer contains a prompt BEFORE processing characters.
+                // This allows shell_state_ to be IDLE when we reach the line start.
+                std::string buffer_str(buffer.data(), bytes_read);
+                for (const auto& prompt : config_.shell_prompts) {
+                    if (buffer_str.size() >= prompt.size() &&
+                        buffer_str.find(prompt) != std::string::npos) {
+                        // Buffer contains a prompt - mark as IDLE
+                        // Also check that shell process is actually foreground
+                        if (pty_.is_shell_idle()) {
+                            shell_state_ = ShellState::IDLE;
+                        }
+                        break;
+                    }
+                }
+                
                 for (ssize_t i = 0; i < bytes_read; ++i) {
                     char c = buffer[i];
                     
@@ -386,13 +506,9 @@ namespace dais::core {
                             pass_through_esc_state_ = 0;
                         } else if (c == '\x1b') {
                             pass_through_esc_state_ = 1;
-                        } else if (at_line_start_ && config_.show_logo && pty_.is_shell_idle()) {
-                            // Zsh (and some others) may output a leading space or carriage return 
-                            // for alignment purposes, especially with right-prompt setups.
-                            // Skipping these ensures our injected logo appears *before* visible content.
-                            if (c == ' ') {
-                                continue;
-                            }
+                        } else if (at_line_start_ && config_.show_logo && shell_state_ == ShellState::IDLE && pty_.is_shell_idle()) {
+                            // Inject logo at line start when shell is idle
+                            // Note: Don't skip spaces - they may be part of multi-line prompt formatting
                             if (c >= 33 && c < 127) {
                                 std::string logo_str = handlers::Theme::RESET + "[" + handlers::Theme::LOGO + "-" + handlers::Theme::RESET + "] ";
                                 write(STDOUT_FILENO, logo_str.c_str(), logo_str.size());
@@ -402,7 +518,7 @@ namespace dais::core {
                     } else if (!is_complex_shell_) {
                         // Simple shells: inject immediately
                         if (at_line_start_) {
-                            if (c != '\n' && c != '\r' && config_.show_logo && pty_.is_shell_idle()) {
+                            if (c != '\n' && c != '\r' && config_.show_logo && shell_state_ == ShellState::IDLE && pty_.is_shell_idle()) {
                                 std::string logo_str = handlers::Theme::RESET + "[" + handlers::Theme::LOGO + "-" + handlers::Theme::RESET + "] ";
                                 write(STDOUT_FILENO, logo_str.c_str(), logo_str.size());
                                 at_line_start_ = false;
@@ -561,10 +677,38 @@ namespace dais::core {
                         continue; // Don't add to accumulator
                     }
 
+                    // --- TAB COMPLETION HANDLING ---
+                    // When Tab is pressed, shell does completion which we can't track.
+                    // Mark that accumulator is now unreliable for this command.
+                    // Only set flag when shell is IDLE (we're actually tracking the command).
+                    if (c == '\t') {
+                        if (pty_.is_shell_idle()) {
+                            // If user navigated history, shell doesn't have the text yet.
+                            // Sync shell with accumulator before sending Tab.
+                            if (history_navigated_ && !cmd_accumulator.empty()) {
+                                // Erase the visual display first
+                                for (size_t i = 0; i < cmd_accumulator.size(); ++i) {
+                                    std::cout << "\b \b";
+                                }
+                                std::cout << std::flush;
+                                
+                                // Sync: clear shell's empty line and send command text
+                                const char kill_line = '\x15';  // Ctrl+U
+                                write(pty_.get_master_fd(), &kill_line, 1);
+                                write(pty_.get_master_fd(), cmd_accumulator.c_str(), cmd_accumulator.size());
+                                history_navigated_ = false;
+                            }
+                            tab_used_ = true;
+                        }
+                        data_to_write += c;
+                        continue;
+                    }
+
                     // --- CTRL+C HANDLING ---
-                    // Clears the current line in the shell, so reset our accumulator too.
+                    // Clears the current line in the shell, so reset our accumulator and flags too.
                     if (c == '\x03') {
                         cmd_accumulator.clear();
+                        tab_used_ = false;
                         data_to_write += c;
                         continue;
                     }
@@ -603,15 +747,20 @@ namespace dais::core {
                         }
                         // ---------------------------
                         
-                        // Only save to history and process DAIS commands when shell is idle
-                        // This prevents vim/nano keystrokes from polluting history
-                        if (pty_.is_shell_idle()) {
+                        // Only save to history when shell is idle AND tab wasn't used
+                        // (tab makes accumulator unreliable)
+                        if (pty_.is_shell_idle() && !tab_used_) {
                             // Save to DAIS history file (~/.dais_history)
                             if (!cmd_accumulator.empty()) {
                                 save_history_entry(cmd_accumulator);
                                 history_index_ = command_history_.size();
                                 history_stash_.clear();
                             }
+                        }
+                        
+                        // Process DAIS interceptions when shell is idle
+                        // Note: ls interception works even with tab (uses path validation)
+                        if (pty_.is_shell_idle()) {
                             // 1. Detect 'ls' command (with or without arguments)
                             if (cmd_accumulator == "ls" || cmd_accumulator.starts_with("ls ")) {
                                 // NATIVE LS: Use std::filesystem instead of shell
@@ -621,6 +770,30 @@ namespace dais::core {
                                 
                                 // Parse arguments
                                 auto ls_args = handlers::parse_ls_args(cmd_accumulator);
+                                
+                                // When tab was used, resolve partial paths using fuzzy matching
+                                std::string resolved_cmd = cmd_accumulator;
+                                if (tab_used_ && !ls_args.paths.empty() && ls_args.paths[0] != "") {
+                                    auto resolved = resolve_partial_path(ls_args.paths[0], shell_cwd_);
+                                    if (!resolved.empty() && std::filesystem::exists(resolved)) {
+                                        // Success! Update paths for ls
+                                        ls_args.paths[0] = resolved.string();
+                                        
+                                        // Reconstruct command for history
+                                        resolved_cmd = "ls";
+                                        if (ls_args.show_hidden) resolved_cmd += " -a";
+                                        resolved_cmd += " " + resolved.string();
+                                        
+                                        // Save resolved command to history
+                                        save_history_entry(resolved_cmd);
+                                        history_index_ = command_history_.size();
+                                        history_stash_.clear();
+                                    } else {
+                                        // Resolution failed - let shell handle it
+                                        // (shell has the correct tab-completed path)
+                                        ls_args.supported = false;
+                                    }
+                                }
                                 
                                 if (ls_args.supported) {
                                 // Build format/sort config from current settings
@@ -654,6 +827,7 @@ namespace dais::core {
                                 
                                 // Clear accumulator and skip writing command to PTY
                                 cmd_accumulator.clear();
+                                tab_used_ = false;
                                 at_line_start_ = false; // Prompt will handle this
                                     continue; // Skip the normal PTY write below
                                 }
@@ -752,6 +926,7 @@ namespace dais::core {
 
                         trigger_python_hook("on_command", cmd_accumulator);
                         cmd_accumulator.clear();
+                        tab_used_ = false;  // Reset for next command
                         data_to_write += c;
                     }
                     // Handle Backspace

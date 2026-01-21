@@ -492,40 +492,46 @@ namespace dais::core::handlers {
             max_len = std::max(max_len, item.visible_len);
         }
         
-        size_t col_width = max_len + 4; // padding
-        size_t num_cols = std::max(1ul, static_cast<size_t>(term_width) / col_width);
+        /**
+         * @brief Grid Column Calculation
+         * 
+         * Layout strategy:
+         * - Each cell includes: "| " (prefix) + Content + Padding + "|" (suffix)
+         * - Total width per cell = max_content_len + 7 chars
+         * - We use a conservative calculation (term_width - 4) to ensure the
+         *   leading "| " and trailing " |" fit without wrapping.
+         */
+        size_t col_width = max_len + 4;     ///< Content width + generous padding
+        size_t cell_width = col_width + 3;  ///< Total cell width including borders
+        size_t num_cols = std::max(1ul, (static_cast<size_t>(term_width) - 4) / cell_width);
         
         std::string output;
         size_t col = 0;
         
-        for (const auto& item : grid_items) {
+        for (size_t idx = 0; idx < grid_items.size(); ++idx) {
+            const auto& item = grid_items[idx];
             if (col == 0) {
                 output += Theme::STRUCTURE + "| " + Theme::RESET;
             }
             
             output += item.display_string;
             
-            // Pad to column width
-            size_t padding = col_width - item.visible_len;
+            // Safe padding calculation - avoid underflow
+            size_t padding = (item.visible_len < col_width) ? (col_width - item.visible_len) : 1;
             output += std::string(padding, ' ');
             
-            output += Theme::STRUCTURE + "| " + Theme::RESET;
+            output += Theme::STRUCTURE + "|" + Theme::RESET;
             col++;
             
-            if (col >= num_cols) {
+            bool is_row_end = (col >= num_cols);
+            bool is_last_item = (idx == grid_items.size() - 1);
+            
+            if (is_row_end || is_last_item) {
                 output += "\r\n";
                 col = 0;
+            } else {
+                output += " ";
             }
-        }
-        
-        // Close final row if not complete
-        if (col > 0) {
-            output += "\r\n";
-        }
-        
-        // Remove trailing \r\n since we'll get a newline from the shell prompt
-        if (output.size() >= 2 && output.substr(output.size() - 2) == "\r\n") {
-            output.resize(output.size() - 2);
         }
         
         return output;

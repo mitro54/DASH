@@ -120,6 +120,14 @@ namespace dais::core {
          */
         void sync_child_cwd();
         
+        /** @brief Resolves partial paths using fuzzy component matching.
+         * Used to recover tab-completed paths from incomplete accumulator data.
+         */
+        std::filesystem::path resolve_partial_path(
+            const std::string& partial, 
+            const std::filesystem::path& cwd
+        );
+        
         // =====================================================================
         // SHELL STATE (Prompt-Based Detection)
         // =====================================================================
@@ -142,6 +150,7 @@ namespace dais::core {
         size_t history_index_ = 0;                  ///< Current position in history
         std::string history_stash_;                 ///< Stashes current line when navigating
         bool history_navigated_ = false;            ///< True if arrow navigation was used
+        bool tab_used_ = false;                      ///< True if Tab was used (accumulator unreliable)
         bool skipping_osc_ = false;                 ///< True if we are in the middle of skipping an OSC sequence
         static constexpr size_t MAX_HISTORY = 1000; ///< Max stored commands (like bash)
         
