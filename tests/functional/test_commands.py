@@ -1,11 +1,21 @@
 #!/usr/bin/env python3
 """
-DAIS Functional Tests
-=====================
-Uses pexpect to test DAIS interactive commands.
-Requires: pip install pexpect
+DAIS Functional Tests.
 
-Run: python3 tests/functional/test_commands.py
+This module provides functional tests for the DAIS shell wrapper using pexpect
+to simulate interactive terminal sessions. Tests verify core functionality
+including startup, shutdown, and built-in commands.
+
+Usage:
+    python3 tests/functional/test_commands.py
+
+Requirements:
+    - pexpect: pip install pexpect
+    - DAIS binary must be built in ./build/DAIS
+
+Exit Codes:
+    0 - All tests passed
+    1 - One or more tests failed or binary not found
 """
 
 import sys
@@ -19,8 +29,30 @@ except ImportError:
     sys.exit(1)
 
 
+# =============================================================================
+# Constants
+# =============================================================================
+
+STARTUP_TIMEOUT = 10  # Seconds to wait for DAIS startup message
+COMMAND_TIMEOUT = 5   # Seconds to wait for command responses
+EXIT_TIMEOUT = 10     # Seconds to wait for clean exit
+SHELL_INIT_DELAY = 2  # Seconds to allow shell initialization
+
+
+# =============================================================================
+# Utilities
+# =============================================================================
+
 def find_binary():
-    """Find the DAIS binary, checking multiple possible locations."""
+    """
+    Locate the DAIS binary by checking common build paths.
+
+    Searches multiple candidate paths relative to both the current working
+    directory and the script location to support various execution contexts.
+
+    Returns:
+        str: Absolute path to the DAIS binary if found, None otherwise.
+    """
     candidates = [
         './build/DAIS',
         '../build/DAIS',
@@ -32,112 +64,156 @@ def find_binary():
     return None
 
 
+def spawn_dais(binary):
+    """
+    Spawn a new DAIS process with PTY allocation.
+
+    Args:
+        binary: Path to the DAIS binary.
+
+    Returns:
+        pexpect.spawn: The spawned child process.
+    """
+    return pexpect.spawn(binary, timeout=15, encoding='utf-8')
+
+
+def cleanup_child(child):
+    """
+    Safely terminate and close a pexpect child process.
+
+    Args:
+        child: The pexpect child process to clean up.
+    """
+    try:
+        child.sendline(':exit')
+        child.expect(pexpect.EOF, timeout=EXIT_TIMEOUT)
+    except pexpect.TIMEOUT:
+        child.terminate(force=True)
+    finally:
+        child.close()
+
+
+# =============================================================================
+# Test Cases
+# =============================================================================
+
 def test_startup_and_exit():
-    """Test that DAIS starts and exits cleanly."""
+    """
+    Verify DAIS starts correctly and responds to :exit command.
+
+    This test confirms:
+    - DAIS launches and displays a startup message
+    - The :exit command terminates the session cleanly
+    - No zombie processes are left behind
+
+    Returns:
+        bool: True if test passed, False if failed, None if skipped.
+    """
     print("[TEST] Startup and exit...")
-    
+
     binary = find_binary()
     if not binary:
         print("  SKIP: Binary not found")
         return None
-    
+
     try:
-        # Spawn DAIS with a PTY
-        child = pexpect.spawn(binary, timeout=15, encoding='utf-8')
-        
-        # Wait for startup - look for the startup message
+        child = spawn_dais(binary)
+
+        # Check for startup message
         try:
-            child.expect('DAIS has been started', timeout=10)
+            child.expect('DAIS has been started', timeout=STARTUP_TIMEOUT)
             print("  PASS: Startup message detected")
         except pexpect.TIMEOUT:
             print("  WARN: Startup message not found (continuing anyway)")
-        
-        # Give shell time to initialize
-        time.sleep(2)
-        
-        # Send :exit command
+
+        # Allow shell to initialize
+        time.sleep(SHELL_INIT_DELAY)
+
+        # Test clean exit
         child.sendline(':exit')
-        
-        # Wait for clean exit
         try:
-            child.expect(pexpect.EOF, timeout=10)
+            child.expect(pexpect.EOF, timeout=EXIT_TIMEOUT)
             print("  PASS: Clean exit")
         except pexpect.TIMEOUT:
             print("  FAIL: Did not exit within timeout")
             child.terminate(force=True)
             return False
-        
+
         child.close()
         return True
-        
+
     except Exception as e:
         print(f"  FAIL: Exception - {e}")
         return False
 
 
 def test_help_command():
-    """Test that :help displays expected content."""
+    """
+    Verify the :help command displays expected content.
+
+    This test confirms:
+    - The :help command is recognized
+    - Output contains the "DAIS Commands" header
+    - Session can be exited after running :help
+
+    Returns:
+        bool: True if test passed, False if failed, None if skipped.
+    """
     print("[TEST] :help command...")
-    
+
     binary = find_binary()
     if not binary:
         print("  SKIP: Binary not found")
         return None
-    
+
     try:
-        child = pexpect.spawn(binary, timeout=15, encoding='utf-8')
-        
-        # Wait for startup
-        time.sleep(3)
-        
-        # Send :help command
+        child = spawn_dais(binary)
+        time.sleep(SHELL_INIT_DELAY + 1)
+
         child.sendline(':help')
-        
-        # Look for expected content
+
         try:
-            child.expect('DAIS Commands', timeout=5)
+            child.expect('DAIS Commands', timeout=COMMAND_TIMEOUT)
             print("  PASS: Help header found")
         except pexpect.TIMEOUT:
             print("  WARN: Help header not found")
-        
-        # Clean exit
+
         time.sleep(0.5)
-        child.sendline(':exit')
-        
-        try:
-            child.expect(pexpect.EOF, timeout=10)
-        except pexpect.TIMEOUT:
-            child.terminate(force=True)
-        
-        child.close()
+        cleanup_child(child)
         print("  PASS: :help command works")
         return True
-        
+
     except Exception as e:
         print(f"  FAIL: Exception - {e}")
         return False
 
 
 def test_q_exit():
-    """Test that :q also exits."""
+    """
+    Verify the :q shortcut command exits DAIS.
+
+    This test confirms:
+    - The :q command is recognized as an exit alias
+    - Session terminates cleanly without needing :exit
+
+    Returns:
+        bool: True if test passed, False if failed, None if skipped.
+    """
     print("[TEST] :q exit command...")
-    
+
     binary = find_binary()
     if not binary:
         print("  SKIP: Binary not found")
         return None
-    
+
     try:
-        child = pexpect.spawn(binary, timeout=15, encoding='utf-8')
-        
-        # Wait for startup
-        time.sleep(3)
-        
-        # Send :q command
+        child = spawn_dais(binary)
+        time.sleep(SHELL_INIT_DELAY + 1)
+
         child.sendline(':q')
-        
+
         try:
-            child.expect(pexpect.EOF, timeout=10)
+            child.expect(pexpect.EOF, timeout=EXIT_TIMEOUT)
             print("  PASS: :q works")
             child.close()
             return True
@@ -145,61 +221,64 @@ def test_q_exit():
             print("  FAIL: :q did not terminate")
             child.terminate(force=True)
             return False
-        
+
     except Exception as e:
         print(f"  FAIL: Exception - {e}")
         return False
 
 
+# =============================================================================
+# Main Entry Point
+# =============================================================================
+
 def main():
-    """Run all functional tests."""
+    """
+    Execute all functional tests and report results.
+
+    Runs each test case sequentially with delays between tests to avoid
+    resource contention. Prints a summary and exits with appropriate code.
+    """
     print("=" * 50)
     print(" DAIS Functional Tests")
     print("=" * 50)
-    
+
     binary = find_binary()
     if not binary:
-        print(f"ERROR: DAIS binary not found")
+        print("ERROR: DAIS binary not found")
         print("Searched: ./build/DAIS, ../build/DAIS")
-        print("Make sure to build DAIS first: mkdir build && cd build && cmake .. && make")
+        print("Build first: mkdir build && cd build && cmake .. && make")
         sys.exit(1)
-    
+
     print(f"Using binary: {binary}")
     print()
-    
+
+    # Execute tests with inter-test delays
     results = []
-    
-    # Run tests with delays between them to avoid resource contention
+
     results.append(('startup_exit', test_startup_and_exit()))
     time.sleep(1)
-    
+
     results.append(('help', test_help_command()))
     time.sleep(1)
-    
+
     results.append(('q_exit', test_q_exit()))
-    
-    # Summary
+
+    # Print summary
     print()
     print("=" * 50)
     print(" Results Summary")
     print("=" * 50)
-    
-    # Filter out None (skipped) results
-    valid_results = [(name, result) for name, result in results if result is not None]
+
+    valid_results = [(name, r) for name, r in results if r is not None]
     passed = sum(1 for _, r in valid_results if r)
     total = len(valid_results)
-    
+
     for name, result in results:
-        if result is None:
-            status = "SKIP"
-        elif result:
-            status = "PASS"
-        else:
-            status = "FAIL"
+        status = "SKIP" if result is None else ("PASS" if result else "FAIL")
         print(f"  {name}: {status}")
-    
+
     print(f"\n{passed}/{total} tests passed")
-    
+
     if passed == total and total > 0:
         print("\nAll tests passed!")
         sys.exit(0)
