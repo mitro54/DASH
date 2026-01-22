@@ -98,11 +98,7 @@ Choose your operating system:
 - Docker does not need sudo, try without it if the command fails
 - Make sure your g++ version is at least 13 to support C++20
 
-#### Ubuntu 24.04 LTS
-- `sudo apt update`
-- `sudo apt install build-essential cmake python3-dev git`
-
-#### Debian 13
+#### Ubuntu 24.04 LTS and Debian 13
 - `sudo apt update`
 - `sudo apt install build-essential cmake python3-dev git`
 
@@ -128,7 +124,7 @@ Choose your operating system:
 - `cd build`
 
 ### 4. Run cmake and make
-- `cmake ..` or `cmake -DCMAKE_CXX_COMPILER=g++-13 ..` to make sure it uses at least GCC 13 for C++20 (Linux)
+- `cmake ..` or `cmake -DCMAKE_CXX_COMPILER=g++-13 ..` if you have issues with g++ version
 - `make`
 
 ### 4.1 (Optional) Install the DAIS command system-wide
