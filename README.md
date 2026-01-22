@@ -1,7 +1,7 @@
 # &lt; DATA / AI SHELL >
 ## ... [<span style="color:#ff00ff">-</span>] DAIS
 
-![CI Tests](https://github.com/mitro54/DAIS/actions/workflows/ci-tests.yml/badge.svg)
+![CI Tests](https://github.com/mitro54/DAIS/actions/workflows/ci-tests.yml/badge.svg) [![Coverage Report](https://img.shields.io/badge/coverage-report-blue)](https://mitro54.github.io/DAIS/coverage/)
 
 - In researching / early development stage
 - Currently meets the MVP requirements stated in roadmap.md
