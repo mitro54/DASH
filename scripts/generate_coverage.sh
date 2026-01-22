@@ -51,11 +51,18 @@ if [ "$GCDA_COUNT" -eq 0 ]; then
 fi
 
 echo "Step 1: Capturing coverage data..."
+# Note on --ignore-errors flags:
+#   mismatch: Template-heavy C++ (pybind11) causes line/block mismatches - expected
+#   negative: Race conditions in coverage counters (mitigated by -fprofile-update=atomic)
+#   gcov: Unexecuted blocks in templated code - cosmetic warning only
 lcov --capture \
     --directory "$BUILD_DIR" \
     --output-file "$LCOV_FILE" \
-    --ignore-errors mismatch \
-    --rc lcov_branch_coverage=1
+    --ignore-errors mismatch,mismatch \
+    --ignore-errors negative,negative \
+    --ignore-errors gcov,gcov \
+    --rc branch_coverage=1 \
+    --rc geninfo_unexecuted_blocks=1
 
 echo "Step 2: Removing external library coverage..."
 lcov --remove "$LCOV_FILE" \
@@ -63,8 +70,9 @@ lcov --remove "$LCOV_FILE" \
     '*/pybind11/*' \
     '*/build/_deps/*' \
     --output-file "$LCOV_FILE" \
-    --ignore-errors unused \
-    --rc lcov_branch_coverage=1
+    --ignore-errors unused,unused \
+    --ignore-errors mismatch,mismatch \
+    --rc branch_coverage=1
 
 echo "Step 3: Generating HTML report..."
 rm -rf "$OUTPUT_DIR"
@@ -73,7 +81,8 @@ genhtml "$LCOV_FILE" \
     --title "DAIS Code Coverage" \
     --legend \
     --branch-coverage \
-    --rc lcov_branch_coverage=1
+    --ignore-errors mismatch,mismatch \
+    --rc branch_coverage=1
 
 echo ""
 echo "============================================"
@@ -83,7 +92,7 @@ echo "Report: $OUTPUT_DIR/index.html"
 echo ""
 
 # Print summary
-lcov --summary "$LCOV_FILE" --rc lcov_branch_coverage=1 2>&1 | tail -5
+lcov --summary "$LCOV_FILE" --rc branch_coverage=1 2>&1 | tail -5
 
 echo ""
 echo "Open the report with: open $OUTPUT_DIR/index.html"

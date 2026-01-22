@@ -165,8 +165,10 @@ jobs:
 
       - name: Run tests (generates .gcda files)
         run: |
-          python3 tests/functional/test_commands.py || true
-          python3 tests/functional/test_ls_output.py || true
+          # Run tests to generate coverage data
+          # Tests may fail but we still want coverage of executed paths
+          python3 tests/functional/test_commands.py || echo "⚠️ test_commands.py had failures"
+          python3 tests/functional/test_ls_output.py || echo "⚠️ test_ls_output.py had failures"
 
       - name: Generate coverage report
         run: |

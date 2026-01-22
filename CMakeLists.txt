@@ -19,7 +19,8 @@ option(ENABLE_COVERAGE "Enable code coverage instrumentation (gcov/lcov)" OFF)
 if(ENABLE_COVERAGE)
     message(STATUS "Code coverage enabled")
     # GCC/Clang coverage flags
-    add_compile_options(--coverage -fprofile-arcs -ftest-coverage)
+    # -fprofile-update=atomic: Fixes negative counts in multi-threaded code (thread-safety)
+    add_compile_options(--coverage -fprofile-arcs -ftest-coverage -fprofile-update=atomic)
     add_link_options(--coverage)
 endif()
 
