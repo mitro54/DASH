@@ -55,11 +55,11 @@ jobs:
 
       - name: Run build tests
         run: |
-          docker run --rm dais-test:${{ matrix.distro }} ./tests/test_build.sh
+          docker run --rm dais-test:${{ matrix.distro }} bash ./tests/test_build.sh
 
       - name: Run functional tests
         run: |
-          docker run --rm dais-test:${{ matrix.distro }} bash -c "
+          docker run --rm -t dais-test:${{ matrix.distro }} bash -c "
             pip3 install pexpect --break-system-packages 2>/dev/null || pip3 install pexpect
             python3 tests/functional/test_commands.py
           "
@@ -89,11 +89,11 @@ jobs:
       - name: Run build tests
         run: |
           chmod +x tests/test_build.sh
-          ./tests/test_build.sh
+          bash ./tests/test_build.sh
 
       - name: Run functional tests
         run: |
-          pip3 install pexpect
+          pip3 install pexpect --break-system-packages || pip3 install pexpect
           python3 tests/functional/test_commands.py
 
   # ==========================================================================
