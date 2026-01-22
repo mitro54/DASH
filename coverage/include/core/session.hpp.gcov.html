@@ -1,0 +1,143 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - DAIS Code Coverage - include/core/session.hpp</title>
+  <link rel="stylesheet" type="text/css" href="../../gcov.css">
+</head>
+
+<body>
+
+          <table width="100%" border=0 cellspacing=0 cellpadding=0>
+            <tr><td class="title">LCOV - code coverage report</td></tr>
+            <tr><td class="ruler"><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+
+            <tr>
+              <td width="100%">
+                <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="10%" class="headerValue"><a href="../../index.html">top level</a> - <a href="index.html">include/core</a> - session.hpp<span style="font-size: 80%;"> (source / <a href="session.hpp.func-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="5%"></td>
+            <td width="5%" class="headerCovTableHead">Coverage</td>
+            <td width="5%" class="headerCovTableHead" title="Covered + Uncovered code">Total</td>
+            <td width="5%" class="headerCovTableHead" title="Exercised code only">Hit</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">DAIS Code Coverage</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntryHi">100.0&nbsp;%</td>
+            <td class="headerCovTableEntry">5</td>
+            <td class="headerCovTableEntry">5</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test Date:</td>
+            <td class="headerValue">2026-01-22 22:58:32</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntryHi">100.0&nbsp;%</td>
+            <td class="headerCovTableEntry">3</td>
+            <td class="headerCovTableEntry">3</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+            | Branches:
+            <span class="coverLegendCov">+</span> taken
+            <span class="coverLegendNoCov">-</span> not taken
+            <span class="coverLegendNoCov">#</span> not executed
+</td>
+            <td></td>
+            <td class="headerItem">Branches:</td>
+            <td class="headerCovTableEntryHi">-</td>
+            <td class="headerCovTableEntry">0</td>
+            <td class="headerCovTableEntry">0</td>
+          </tr>
+                  <tr><td><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+                </table>
+              </td>
+            </tr>
+
+            <tr><td class="ruler"><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+          </table>
+
+          <table cellpadding=0 cellspacing=0 border=0>
+            <tr>
+              <td><br></td>
+            </tr>
+            <tr>
+              <td>
+<pre class="sourceHeading">             Branch data     Line data    Source code</pre>
+<pre class="source">
+<span id="L1"><span class="lineNum">       1</span>                 :             : #pragma once</span>
+<span id="L2"><span class="lineNum">       2</span>                 :             : </span>
+<span id="L3"><span class="lineNum">       3</span>                 :             : #include &lt;termios.h&gt;</span>
+<span id="L4"><span class="lineNum">       4</span>                 :             : #include &lt;unistd.h&gt;</span>
+<span id="L5"><span class="lineNum">       5</span>                 :             : #include &lt;sys/ioctl.h&gt;</span>
+<span id="L6"><span class="lineNum">       6</span>                 :             : #include &lt;cstdint&gt;</span>
+<span id="L7"><span class="lineNum">       7</span>                 :             : </span>
+<span id="L8"><span class="lineNum">       8</span>                 :             : namespace dais::core {</span>
+<span id="L9"><span class="lineNum">       9</span>                 :             : </span>
+<span id="L10"><span class="lineNum">      10</span>                 :             :     class PTYSession {</span>
+<span id="L11"><span class="lineNum">      11</span>                 :             :     public:</span>
+<span id="L12"><span class="lineNum">      12</span>                 :             :         PTYSession();</span>
+<span id="L13"><span class="lineNum">      13</span>                 :             :         ~PTYSession();</span>
+<span id="L14"><span class="lineNum">      14</span>                 :             : </span>
+<span id="L15"><span class="lineNum">      15</span>                 :             :         // Starts the PTY and forks the child process</span>
+<span id="L16"><span class="lineNum">      16</span>                 :             :         bool start();</span>
+<span id="L17"><span class="lineNum">      17</span>                 :             :         </span>
+<span id="L18"><span class="lineNum">      18</span>                 :             :         // Clean cleanup of file descriptors and processes</span>
+<span id="L19"><span class="lineNum">      19</span>                 :             :         void stop();</span>
+<span id="L20"><span class="lineNum">      20</span>                 :             : </span>
+<span id="L21"><span class="lineNum">      21</span>                 :             :         // Updates the PTY size (rows/cols) to match the physical window.</span>
+<span id="L22"><span class="lineNum">      22</span>                 :             :         // Handles &quot;Safe Width&quot; calculation for the logo injection.</span>
+<span id="L23"><span class="lineNum">      23</span>                 :             :         void resize(int rows, int cols, bool show_logo);</span>
+<span id="L24"><span class="lineNum">      24</span>                 :             : </span>
+<span id="L25"><span class="lineNum">      25</span>                 :             :         // Getters</span>
+<span id="L26"><span class="lineNum">      26</span>                 :<span class="tlaGNC tlaBgGNC">          74 :         [[nodiscard]] int get_master_fd() const { return master_fd_; }</span></span>
+<span id="L27"><span class="lineNum">      27</span>                 :<span class="tlaGNC">          26 :         [[nodiscard]] pid_t get_child_pid() const { return child_pid_; }</span></span>
+<span id="L28"><span class="lineNum">      28</span>                 :             :         </span>
+<span id="L29"><span class="lineNum">      29</span>                 :             :         /**</span>
+<span id="L30"><span class="lineNum">      30</span>                 :             :          * @brief Checks if the shell is idle (at prompt, no foreground child).</span>
+<span id="L31"><span class="lineNum">      31</span>                 :             :          * Uses tcgetpgrp to get the foreground process group of the PTY.</span>
+<span id="L32"><span class="lineNum">      32</span>                 :             :          * If it matches the shell's PID, no child (vim, python, etc.) is running.</span>
+<span id="L33"><span class="lineNum">      33</span>                 :             :          * @return true if shell is idle, false if a child process is in foreground</span>
+<span id="L34"><span class="lineNum">      34</span>                 :             :          */</span>
+<span id="L35"><span class="lineNum">      35</span>                 :<span class="tlaGNC">         999 :         [[nodiscard]] bool is_shell_idle() const {</span></span>
+<span id="L36"><span class="lineNum">      36</span>                 :<span class="tlaGNC">         999 :             pid_t fg_pgrp = tcgetpgrp(master_fd_);</span></span>
+<span id="L37"><span class="lineNum">      37</span>                 :             :             // If fg_pgrp matches the shell's process group, shell is idle</span>
+<span id="L38"><span class="lineNum">      38</span>                 :             :             // getpgid(child_pid_) gets the shell's process group</span>
+<span id="L39"><span class="lineNum">      39</span>                 :<span class="tlaGNC">         999 :             return fg_pgrp == getpgid(child_pid_);</span></span>
+<span id="L40"><span class="lineNum">      40</span>                 :             :         }</span>
+<span id="L41"><span class="lineNum">      41</span>                 :             : </span>
+<span id="L42"><span class="lineNum">      42</span>                 :             :     private:</span>
+<span id="L43"><span class="lineNum">      43</span>                 :             :         int master_fd_;</span>
+<span id="L44"><span class="lineNum">      44</span>                 :             :         pid_t child_pid_;</span>
+<span id="L45"><span class="lineNum">      45</span>                 :             :         struct termios orig_term_; // To restore terminal settings on exit</span>
+<span id="L46"><span class="lineNum">      46</span>                 :             : </span>
+<span id="L47"><span class="lineNum">      47</span>                 :             :         void set_raw_mode();</span>
+<span id="L48"><span class="lineNum">      48</span>                 :             :         void restore_term_mode();</span>
+<span id="L49"><span class="lineNum">      49</span>                 :             :     };</span>
+<span id="L50"><span class="lineNum">      50</span>                 :             : </span>
+<span id="L51"><span class="lineNum">      51</span>                 :             : }</span>
+        </pre>
+              </td>
+            </tr>
+          </table>
+          <br>
+
+          <table width="100%" border=0 cellspacing=0 cellpadding=0>
+            <tr><td class="ruler"><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+            <tr><td class="versionInfo">Generated by: <a href="https://github.com//linux-test-project/lcov" target="_parent">LCOV version 2.0-1</a></td></tr>
+          </table>
+          <br>
+
+</body>
+</html>

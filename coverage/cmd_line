@@ -1,0 +1,1 @@
+genhtml coverage.info --output-directory coverage --title 'DAIS Code Coverage' --legend --branch-coverage --ignore-errors mismatch,mismatch --rc branch_coverage=1
