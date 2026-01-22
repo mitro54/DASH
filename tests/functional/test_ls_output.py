@@ -198,8 +198,8 @@ def test_ls_basic(binary, fixtures_dir):
     try:
         child = spawn_dais_ready(binary)
 
-        # Use ls with explicit path - avoids cd sync issues
-        child.sendline(f'ls "{fixtures_dir}"')
+        # Use ls with explicit path (no quotes - fixture paths are safe)
+        child.sendline(f'ls {fixtures_dir}')
 
         # Use expect to capture output - look for sample.txt
         try:
@@ -236,8 +236,8 @@ def test_ls_shows_directory_count(binary, fixtures_dir):
     try:
         child = spawn_dais_ready(binary)
 
-        # Use ls with explicit path
-        child.sendline(f'ls "{fixtures_dir}"')
+        # Use ls with explicit path (no quotes)
+        child.sendline(f'ls {fixtures_dir}')
 
         # Look for subdir in output
         try:
@@ -275,8 +275,8 @@ def test_ls_with_path(binary, fixtures_dir):
     try:
         child = spawn_dais_ready(binary)
 
-        # Run ls with explicit path
-        child.sendline(f'ls "{fixtures_dir}"')
+        # Run ls with explicit path (no quotes)
+        child.sendline(f'ls {fixtures_dir}')
 
         # Look for any fixture file to confirm output
         try:
