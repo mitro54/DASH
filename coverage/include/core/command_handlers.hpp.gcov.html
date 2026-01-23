@@ -37,7 +37,7 @@
           </tr>
           <tr>
             <td class="headerItem">Test Date:</td>
-            <td class="headerValue">2026-01-22 22:58:32</td>
+            <td class="headerValue">2026-01-23 23:52:41</td>
             <td></td>
             <td class="headerItem">Functions:</td>
             <td class="headerCovTableEntryHi">91.7&nbsp;%</td>
@@ -389,36 +389,36 @@
 <span id="L304"><span class="lineNum">     304</span>                 :             :      * Only supports: ls, ls -a, ls --all, and paths.</span>
 <span id="L305"><span class="lineNum">     305</span>                 :             :      * Anything else (e.g., -l, -R, -t) marks supported=false.</span>
 <span id="L306"><span class="lineNum">     306</span>                 :             :      */</span>
-<span id="L307"><span class="lineNum">     307</span>                 :<span class="tlaGNC">           4 :     inline LSArgs parse_ls_args(const std::string&amp; input) {</span></span>
-<span id="L308"><span class="lineNum">     308</span>                 :<span class="tlaGNC">           4 :         LSArgs args;</span></span>
-<span id="L309"><span class="lineNum">     309</span>         [<span class="tlaGBC" title="Branch 0 was taken 4 times"> + </span><span class="tlaUNC" title="Branch 1 was not taken"> - </span>]:<span class="tlaGNC">           4 :         std::istringstream iss(input);</span></span>
-<span id="L310"><span class="lineNum">     310</span>                 :<span class="tlaGNC">           4 :         std::string token;</span></span>
+<span id="L307"><span class="lineNum">     307</span>                 :<span class="tlaGNC">           5 :     inline LSArgs parse_ls_args(const std::string&amp; input) {</span></span>
+<span id="L308"><span class="lineNum">     308</span>                 :<span class="tlaGNC">           5 :         LSArgs args;</span></span>
+<span id="L309"><span class="lineNum">     309</span>         [<span class="tlaGBC" title="Branch 0 was taken 5 times"> + </span><span class="tlaUNC" title="Branch 1 was not taken"> - </span>]:<span class="tlaGNC">           5 :         std::istringstream iss(input);</span></span>
+<span id="L310"><span class="lineNum">     310</span>                 :<span class="tlaGNC">           5 :         std::string token;</span></span>
 <span id="L311"><span class="lineNum">     311</span>                 :             :         </span>
-<span id="L312"><span class="lineNum">     312</span>         [<span class="tlaGBC" title="Branch 0 was taken 4 times"> + </span><span class="tlaUNC" title="Branch 1 was not taken"> - </span>]:<span class="tlaGNC">           4 :         iss &gt;&gt; token; // Skip &quot;ls&quot; command itself</span></span>
+<span id="L312"><span class="lineNum">     312</span>         [<span class="tlaGBC" title="Branch 0 was taken 5 times"> + </span><span class="tlaUNC" title="Branch 1 was not taken"> - </span>]:<span class="tlaGNC">           5 :         iss &gt;&gt; token; // Skip &quot;ls&quot; command itself</span></span>
 <span id="L313"><span class="lineNum">     313</span>                 :             :         </span>
-<span id="L314"><span class="lineNum">     314</span>   [<span class="tlaGBC" title="Branch 0 was taken 8 times"> + </span><span class="tlaUNC" title="Branch 1 was not taken"> - </span><span class="tlaGBC" title="Branch 2 was taken 8 times"> + </span><span class="tlaUNC" title="Branch 3 was not taken"> - </span> :<span class="tlaGNC">           8 :         while (iss &gt;&gt; token) {</span></span>
-<span class="lineNum">        </span>          <span class="tlaGBC" title="Branch 4 was taken 4 times"> + </span><span class="tlaGBC" title="Branch 5 was taken 4 times"> + </span>]
-<span id="L315"><span class="lineNum">     315</span>   [<span class="tlaGBC" title="Branch 0 was taken 4 times"> + </span><span class="tlaUNC" title="Branch 1 was not taken"> - </span><span class="tlaGBC" title="Branch 2 was taken 4 times"> + </span><span class="tlaUNC" title="Branch 3 was not taken"> - </span> :<span class="tlaGNC">           4 :             if (token == &quot;-a&quot; || token == &quot;--all&quot;) {</span></span>
-<span class="lineNum">        </span> <span class="tlaGBC" title="Branch 4 was taken 4 times"> + </span><span class="tlaUNC" title="Branch 5 was not taken"> - </span><span class="tlaUNC" title="Branch 6 was not taken"> - </span><span class="tlaGBC" title="Branch 7 was taken 4 times"> + </span><span class="tlaUNC" title="Branch 8 was not taken"> - </span> 
-<span class="lineNum">        </span>             <span class="tlaGBC" title="Branch 9 was taken 4 times"> + </span>]
+<span id="L314"><span class="lineNum">     314</span>   [<span class="tlaGBC" title="Branch 0 was taken 10 times"> + </span><span class="tlaUNC" title="Branch 1 was not taken"> - </span><span class="tlaGBC" title="Branch 2 was taken 10 times"> + </span><span class="tlaUNC" title="Branch 3 was not taken"> - </span> :<span class="tlaGNC">          10 :         while (iss &gt;&gt; token) {</span></span>
+<span class="lineNum">        </span>          <span class="tlaGBC" title="Branch 4 was taken 5 times"> + </span><span class="tlaGBC" title="Branch 5 was taken 5 times"> + </span>]
+<span id="L315"><span class="lineNum">     315</span>   [<span class="tlaGBC" title="Branch 0 was taken 5 times"> + </span><span class="tlaUNC" title="Branch 1 was not taken"> - </span><span class="tlaGBC" title="Branch 2 was taken 5 times"> + </span><span class="tlaUNC" title="Branch 3 was not taken"> - </span> :<span class="tlaGNC">           5 :             if (token == &quot;-a&quot; || token == &quot;--all&quot;) {</span></span>
+<span class="lineNum">        </span> <span class="tlaGBC" title="Branch 4 was taken 5 times"> + </span><span class="tlaUNC" title="Branch 5 was not taken"> - </span><span class="tlaUNC" title="Branch 6 was not taken"> - </span><span class="tlaGBC" title="Branch 7 was taken 5 times"> + </span><span class="tlaUNC" title="Branch 8 was not taken"> - </span> 
+<span class="lineNum">        </span>             <span class="tlaGBC" title="Branch 9 was taken 5 times"> + </span>]
 <span id="L316"><span class="lineNum">     316</span>                 :<span class="tlaUNC tlaBgUNC">           0 :                 args.show_hidden = true;</span></span>
-<span id="L317"><span class="lineNum">     317</span>         [<span class="tlaUNC" title="Branch 0 was not taken"> - </span><span class="tlaGBC" title="Branch 1 was taken 4 times"> + </span>]:<span class="tlaGNC tlaBgGNC">           4 :             } else if (token.starts_with(&quot;-&quot;)) {</span></span>
+<span id="L317"><span class="lineNum">     317</span>         [<span class="tlaUNC" title="Branch 0 was not taken"> - </span><span class="tlaGBC" title="Branch 1 was taken 5 times"> + </span>]:<span class="tlaGNC tlaBgGNC">           5 :             } else if (token.starts_with(&quot;-&quot;)) {</span></span>
 <span id="L318"><span class="lineNum">     318</span>                 :             :                 // Any other flag (-l, -R, -t, etc.) is not supported natively.</span>
 <span id="L319"><span class="lineNum">     319</span>                 :             :                 // We mark it as unsupported so the engine falls back to the shell.</span>
 <span id="L320"><span class="lineNum">     320</span>                 :<span class="tlaUNC tlaBgUNC">           0 :                 args.supported = false;</span></span>
 <span id="L321"><span class="lineNum">     321</span>                 :<span class="tlaUNC">           0 :                 return args; </span></span>
 <span id="L322"><span class="lineNum">     322</span>                 :             :             } else {</span>
-<span id="L323"><span class="lineNum">     323</span>         [<span class="tlaGBC" title="Branch 0 was taken 4 times"> + </span><span class="tlaUNC" title="Branch 1 was not taken"> - </span>]:<span class="tlaGNC tlaBgGNC">           4 :                 args.paths.push_back(token);</span></span>
+<span id="L323"><span class="lineNum">     323</span>         [<span class="tlaGBC" title="Branch 0 was taken 5 times"> + </span><span class="tlaUNC" title="Branch 1 was not taken"> - </span>]:<span class="tlaGNC tlaBgGNC">           5 :                 args.paths.push_back(token);</span></span>
 <span id="L324"><span class="lineNum">     324</span>                 :             :             }</span>
 <span id="L325"><span class="lineNum">     325</span>                 :             :         }</span>
 <span id="L326"><span class="lineNum">     326</span>                 :             :         </span>
 <span id="L327"><span class="lineNum">     327</span>                 :             :         // Default to current directory if no paths specified</span>
-<span id="L328"><span class="lineNum">     328</span>         [<span class="tlaUNC" title="Branch 0 was not taken"> - </span><span class="tlaGBC" title="Branch 1 was taken 4 times"> + </span>]:<span class="tlaGNC">           4 :         if (args.paths.empty()) {</span></span>
+<span id="L328"><span class="lineNum">     328</span>         [<span class="tlaUNC" title="Branch 0 was not taken"> - </span><span class="tlaGBC" title="Branch 1 was taken 5 times"> + </span>]:<span class="tlaGNC">           5 :         if (args.paths.empty()) {</span></span>
 <span id="L329"><span class="lineNum">     329</span>   [<span class="tlaUNC" title="Branch 0 was not executed"> # </span><span class="tlaUNC" title="Branch 1 was not executed"> # </span><span class="tlaUNC" title="Branch 2 was not executed"> # </span><span class="tlaUNC" title="Branch 3 was not executed"> # </span>]:<span class="tlaUNC tlaBgUNC">           0 :             args.paths.push_back(&quot;&quot;);</span></span>
 <span id="L330"><span class="lineNum">     330</span>                 :             :         }</span>
 <span id="L331"><span class="lineNum">     331</span>                 :             :         </span>
-<span id="L332"><span class="lineNum">     332</span>                 :<span class="tlaGNC tlaBgGNC">           4 :         return args;</span></span>
-<span id="L333"><span class="lineNum">     333</span>                 :<span class="tlaGNC">           4 :     }</span></span>
+<span id="L332"><span class="lineNum">     332</span>                 :<span class="tlaGNC tlaBgGNC">           5 :         return args;</span></span>
+<span id="L333"><span class="lineNum">     333</span>                 :<span class="tlaGNC">           5 :     }</span></span>
 <span id="L334"><span class="lineNum">     334</span>                 :             :     </span>
 <span id="L335"><span class="lineNum">     335</span>                 :             :     /**</span>
 <span id="L336"><span class="lineNum">     336</span>                 :             :      * @brief Lists directory contents using native std::filesystem APIs.</span>
@@ -436,7 +436,7 @@
 <span id="L348"><span class="lineNum">     348</span>                 :             :      * @param pool Thread pool for parallel file analysis</span>
 <span id="L349"><span class="lineNum">     349</span>                 :             :      * @return Formatted grid string ready for display</span>
 <span id="L350"><span class="lineNum">     350</span>                 :             :      */</span>
-<span id="L351"><span class="lineNum">     351</span>                 :<span class="tlaGNC">           4 :     inline std::string native_ls(</span></span>
+<span id="L351"><span class="lineNum">     351</span>                 :<span class="tlaGNC">           5 :     inline std::string native_ls(</span></span>
 <span id="L352"><span class="lineNum">     352</span>                 :             :         const LSArgs&amp; args,</span>
 <span id="L353"><span class="lineNum">     353</span>                 :             :         const std::filesystem::path&amp; cwd,</span>
 <span id="L354"><span class="lineNum">     354</span>                 :             :         const LSFormats&amp; formats,</span>
@@ -451,28 +451,28 @@
 <span id="L363"><span class="lineNum">     363</span>                 :             :             size_t visible_len = 0;</span>
 <span id="L364"><span class="lineNum">     364</span>                 :             :         };</span>
 <span id="L365"><span class="lineNum">     365</span>                 :             :         </span>
-<span id="L366"><span class="lineNum">     366</span>                 :<span class="tlaGNC">           4 :         std::vector&lt;std::future&lt;GridItem&gt;&gt; futures;</span></span>
-<span id="L367"><span class="lineNum">     367</span>                 :<span class="tlaGNC">           4 :         std::vector&lt;GridItem&gt; grid_items;</span></span>
+<span id="L366"><span class="lineNum">     366</span>                 :<span class="tlaGNC">           5 :         std::vector&lt;std::future&lt;GridItem&gt;&gt; futures;</span></span>
+<span id="L367"><span class="lineNum">     367</span>                 :<span class="tlaGNC">           5 :         std::vector&lt;GridItem&gt; grid_items;</span></span>
 <span id="L368"><span class="lineNum">     368</span>                 :             :         </span>
 <span id="L369"><span class="lineNum">     369</span>                 :             :         // Process each target path</span>
-<span id="L370"><span class="lineNum">     370</span>         [<span class="tlaGBC" title="Branch 0 was taken 4 times"> + </span><span class="tlaGBC" title="Branch 1 was taken 3 times"> + </span>]:<span class="tlaGNC">           7 :         for (const auto&amp; target : args.paths) {</span></span>
-<span id="L371"><span class="lineNum">     371</span>   [<span class="tlaUNC" title="Branch 0 was not taken"> - </span><span class="tlaGBC" title="Branch 1 was taken 4 times"> + </span><span class="tlaUNC" title="Branch 2 was not taken"> - </span><span class="tlaUNC" title="Branch 3 was not taken"> - </span> :<span class="tlaGNC">           4 :             std::filesystem::path dir_path = target.empty() ? cwd : cwd / target;</span></span>
-<span class="lineNum">        </span> <span class="tlaGBC" title="Branch 4 was taken 4 times"> + </span><span class="tlaUNC" title="Branch 5 was not taken"> - </span><span class="tlaGBC" title="Branch 6 was taken 4 times"> + </span><span class="tlaUNC" title="Branch 7 was not taken"> - </span><span class="tlaGBC" title="Branch 8 was taken 4 times"> + </span> 
+<span id="L370"><span class="lineNum">     370</span>         [<span class="tlaGBC" title="Branch 0 was taken 5 times"> + </span><span class="tlaGBC" title="Branch 1 was taken 3 times"> + </span>]:<span class="tlaGNC">           8 :         for (const auto&amp; target : args.paths) {</span></span>
+<span id="L371"><span class="lineNum">     371</span>   [<span class="tlaUNC" title="Branch 0 was not taken"> - </span><span class="tlaGBC" title="Branch 1 was taken 5 times"> + </span><span class="tlaUNC" title="Branch 2 was not taken"> - </span><span class="tlaUNC" title="Branch 3 was not taken"> - </span> :<span class="tlaGNC">           5 :             std::filesystem::path dir_path = target.empty() ? cwd : cwd / target;</span></span>
+<span class="lineNum">        </span> <span class="tlaGBC" title="Branch 4 was taken 5 times"> + </span><span class="tlaUNC" title="Branch 5 was not taken"> - </span><span class="tlaGBC" title="Branch 6 was taken 5 times"> + </span><span class="tlaUNC" title="Branch 7 was not taken"> - </span><span class="tlaGBC" title="Branch 8 was taken 5 times"> + </span> 
 <span class="lineNum">        </span>       <span class="tlaUNC" title="Branch 9 was not taken"> - </span><span class="tlaUNC" title="Branch 10 was not taken"> - </span><span class="tlaUNC" title="Branch 11 was not taken"> - </span>]
 <span id="L372"><span class="lineNum">     372</span>                 :             :             </span>
 <span id="L373"><span class="lineNum">     373</span>                 :             :             // Handle if target is an absolute path</span>
-<span id="L374"><span class="lineNum">     374</span>   [<span class="tlaGBC" title="Branch 0 was taken 4 times"> + </span><span class="tlaUNC" title="Branch 1 was not taken"> - </span><span class="tlaGBC" title="Branch 2 was taken 4 times"> + </span><span class="tlaUNC" title="Branch 3 was not taken"> - </span> :<span class="tlaGNC">           4 :             if (!target.empty() &amp;&amp; std::filesystem::path(target).is_absolute()) {</span></span>
-<span class="lineNum">        </span> <span class="tlaGBC" title="Branch 4 was taken 3 times"> + </span><span class="tlaGBC" title="Branch 5 was taken 1 time"> + </span><span class="tlaGBC" title="Branch 6 was taken 4 times"> + </span><span class="tlaUNC" title="Branch 7 was not taken"> - </span><span class="tlaGBC" title="Branch 8 was taken 3 times"> + </span> 
-<span class="lineNum">        </span>       <span class="tlaGBC" title="Branch 9 was taken 1 time"> + </span><span class="tlaUNC" title="Branch 10 was not taken"> - </span><span class="tlaUNC" title="Branch 11 was not taken"> - </span>]
+<span id="L374"><span class="lineNum">     374</span>   [<span class="tlaGBC" title="Branch 0 was taken 5 times"> + </span><span class="tlaUNC" title="Branch 1 was not taken"> - </span><span class="tlaGBC" title="Branch 2 was taken 5 times"> + </span><span class="tlaUNC" title="Branch 3 was not taken"> - </span> :<span class="tlaGNC">           5 :             if (!target.empty() &amp;&amp; std::filesystem::path(target).is_absolute()) {</span></span>
+<span class="lineNum">        </span> <span class="tlaGBC" title="Branch 4 was taken 3 times"> + </span><span class="tlaGBC" title="Branch 5 was taken 2 times"> + </span><span class="tlaGBC" title="Branch 6 was taken 5 times"> + </span><span class="tlaUNC" title="Branch 7 was not taken"> - </span><span class="tlaGBC" title="Branch 8 was taken 3 times"> + </span> 
+<span class="lineNum">        </span>       <span class="tlaGBC" title="Branch 9 was taken 2 times"> + </span><span class="tlaUNC" title="Branch 10 was not taken"> - </span><span class="tlaUNC" title="Branch 11 was not taken"> - </span>]
 <span id="L375"><span class="lineNum">     375</span>         [<span class="tlaGBC" title="Branch 0 was taken 3 times"> + </span><span class="tlaUNC" title="Branch 1 was not taken"> - </span>]:<span class="tlaGNC">           3 :                 dir_path = target;</span></span>
 <span id="L376"><span class="lineNum">     376</span>                 :             :             }</span>
 <span id="L377"><span class="lineNum">     377</span>                 :             :             </span>
 <span id="L378"><span class="lineNum">     378</span>                 :             :             try {</span>
 <span id="L379"><span class="lineNum">     379</span>                 :             :                 // Check if path exists</span>
-<span id="L380"><span class="lineNum">     380</span>   [<span class="tlaGBC" title="Branch 0 was taken 4 times"> + </span><span class="tlaUNC" title="Branch 1 was not taken"> - </span><span class="tlaGBC" title="Branch 2 was taken 1 time"> + </span><span class="tlaGBC" title="Branch 3 was taken 3 times"> + </span>]:<span class="tlaGNC">           4 :                 if (!std::filesystem::exists(dir_path)) {</span></span>
+<span id="L380"><span class="lineNum">     380</span>   [<span class="tlaGBC" title="Branch 0 was taken 5 times"> + </span><span class="tlaUNC" title="Branch 1 was not taken"> - </span><span class="tlaGBC" title="Branch 2 was taken 2 times"> + </span><span class="tlaGBC" title="Branch 3 was taken 3 times"> + </span>]:<span class="tlaGNC">           5 :                 if (!std::filesystem::exists(dir_path)) {</span></span>
 <span id="L381"><span class="lineNum">     381</span>                 :             :                     // Return error message for non-existent path</span>
-<span id="L382"><span class="lineNum">     382</span>   [<span class="tlaGBC" title="Branch 0 was taken 1 time"> + </span><span class="tlaUNC" title="Branch 1 was not taken"> - </span><span class="tlaGBC" title="Branch 2 was taken 1 time"> + </span><span class="tlaUNC" title="Branch 3 was not taken"> - </span> :<span class="tlaGNC">           1 :                     return Theme::ERROR + &quot;ls: cannot access '&quot; + target + &quot;': No such file or directory&quot; + Theme::RESET + &quot;\r\n&quot;;</span></span>
-<span class="lineNum">        </span> <span class="tlaGBC" title="Branch 4 was taken 1 time"> + </span><span class="tlaUNC" title="Branch 5 was not taken"> - </span><span class="tlaGBC" title="Branch 6 was taken 1 time"> + </span><span class="tlaUNC" title="Branch 7 was not taken"> - </span><span class="tlaGBC" title="Branch 8 was taken 1 time"> + </span> 
+<span id="L382"><span class="lineNum">     382</span>   [<span class="tlaGBC" title="Branch 0 was taken 2 times"> + </span><span class="tlaUNC" title="Branch 1 was not taken"> - </span><span class="tlaGBC" title="Branch 2 was taken 2 times"> + </span><span class="tlaUNC" title="Branch 3 was not taken"> - </span> :<span class="tlaGNC">           2 :                     return Theme::ERROR + &quot;ls: cannot access '&quot; + target + &quot;': No such file or directory&quot; + Theme::RESET + &quot;\r\n&quot;;</span></span>
+<span class="lineNum">        </span> <span class="tlaGBC" title="Branch 4 was taken 2 times"> + </span><span class="tlaUNC" title="Branch 5 was not taken"> - </span><span class="tlaGBC" title="Branch 6 was taken 2 times"> + </span><span class="tlaUNC" title="Branch 7 was not taken"> - </span><span class="tlaGBC" title="Branch 8 was taken 2 times"> + </span> 
 <span class="lineNum">        </span>             <span class="tlaUNC" title="Branch 9 was not taken"> - </span>]
 <span id="L383"><span class="lineNum">     383</span>                 :             :                 }</span>
 <span id="L384"><span class="lineNum">     384</span>                 :             :                 </span>
@@ -519,7 +519,7 @@
 <span id="L416"><span class="lineNum">     416</span>   [<span class="tlaUNC" title="Branch 0 was not taken"> - </span><span class="tlaUNC" title="Branch 1 was not taken"> - </span><span class="tlaUNC" title="Branch 2 was not taken"> - </span><span class="tlaUNC" title="Branch 3 was not taken"> - </span> :<span class="tlaUNC">           0 :                 return Theme::ERROR + &quot;ls: &quot; + e.what() + Theme::RESET + &quot;\r\n&quot;;</span></span>
 <span class="lineNum">        </span>    <span class="tlaUNC" title="Branch 4 was not taken"> - </span><span class="tlaUNC" title="Branch 5 was not taken"> - </span><span class="tlaUNC" title="Branch 6 was not taken"> - </span><span class="tlaUNC" title="Branch 7 was not taken"> - </span>]
 <span id="L417"><span class="lineNum">     417</span>         [<span class="tlaUNC" title="Branch 0 was not taken"> - </span><span class="tlaUNC" title="Branch 1 was not taken"> - </span>]:<span class="tlaUNC">           0 :             }</span></span>
-<span id="L418"><span class="lineNum">     418</span>      [<span class="tlaGBC" title="Branch 0 was taken 3 times"> + </span><span class="tlaGBC" title="Branch 1 was taken 1 time"> + </span><span class="tlaUNC" title="Branch 2 was not taken"> - </span>]:<span class="tlaGNC tlaBgGNC">           4 :         }</span></span>
+<span id="L418"><span class="lineNum">     418</span>      [<span class="tlaGBC" title="Branch 0 was taken 3 times"> + </span><span class="tlaGBC" title="Branch 1 was taken 2 times"> + </span><span class="tlaUNC" title="Branch 2 was not taken"> - </span>]:<span class="tlaGNC tlaBgGNC">           5 :         }</span></span>
 <span id="L419"><span class="lineNum">     419</span>                 :             :         </span>
 <span id="L420"><span class="lineNum">     420</span>                 :             :         // Collect results from futures</span>
 <span id="L421"><span class="lineNum">     421</span>         [<span class="tlaGBC" title="Branch 0 was taken 12 times"> + </span><span class="tlaGBC" title="Branch 1 was taken 3 times"> + </span>]:<span class="tlaGNC">          15 :         for (auto&amp; f : futures) {</span></span>
@@ -683,7 +683,7 @@
 <span id="L572"><span class="lineNum">     572</span>                 :             :         }</span>
 <span id="L573"><span class="lineNum">     573</span>                 :             :         </span>
 <span id="L574"><span class="lineNum">     574</span>                 :<span class="tlaGNC">           3 :         return output;</span></span>
-<span id="L575"><span class="lineNum">     575</span>                 :<span class="tlaGNC">           4 :     }</span></span>
+<span id="L575"><span class="lineNum">     575</span>                 :<span class="tlaGNC">           5 :     }</span></span>
 <span id="L576"><span class="lineNum">     576</span>                 :             : }</span>
         </pre>
               </td>
