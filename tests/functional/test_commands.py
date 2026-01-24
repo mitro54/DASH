@@ -459,7 +459,8 @@ def test_ls_flow_control():
         cmd.sendline(f'ls {fixtures_dir}')
         
         # Wait for prompt relative to previous command
-        cmd.expect(r"DAIS runner\$ ", timeout=COMMAND_TIMEOUT)
+        # Match generic shell prompts (# for root, $ for user)
+        cmd.expect(r"[\#\$] ", timeout=COMMAND_TIMEOUT)
         output_h = cmd.before
         
         if "data.csv" not in output_h or "sample.txt" not in output_h:
@@ -475,7 +476,7 @@ def test_ls_flow_control():
         cmd.sendline(f'ls {fixtures_dir}')
         
         # Capture full output by waiting for prompt
-        cmd.expect(r"DAIS runner\$ ", timeout=COMMAND_TIMEOUT)
+        cmd.expect(r"[\#\$] ", timeout=COMMAND_TIMEOUT)
         output_v = cmd.before
 
         # Check relative positions
