@@ -23,6 +23,7 @@ import shutil
 import sys
 import tempfile
 import time
+import uuid
 
 try:
     import pexpect
@@ -449,6 +450,14 @@ def test_ls_flow_control():
 
     print(f"Testing LS flow control in '{fixtures_dir}'...")
 
+    # Helper to sync buffer with unique token
+    def sync_shell():
+        token = f"SYNC_{uuid.uuid4().hex[:8]}"
+        cmd.sendline(f"echo {token}")
+        cmd.expect(token)
+        cmd.expect(prompt_re)
+        time.sleep(0.5)
+
     try:
         # Define prompt regex (root # or user $)
         prompt_re = r"[\#\$] "
@@ -457,11 +466,14 @@ def test_ls_flow_control():
         # :ls h -> Horizontal flow
         cmd.sendline(":ls h")
         cmd.expect("ls:.*?flow=h", timeout=COMMAND_TIMEOUT)
-        # Consume the prompt triggered by the internal command
-        cmd.expect(prompt_re, timeout=COMMAND_TIMEOUT)
+        sync_shell()
 
-        # Run ls on fixtures
-        cmd.sendline(f'ls {fixtures_dir}')
+        # Change directory to fixtures to avoid path parsing issues
+        cmd.sendline(f'cd {fixtures_dir}')
+        sync_shell()
+
+        # Run native ls (no args, uses CWD)
+        cmd.sendline('ls')
         
         # Wait for prompt relative to 'ls' command
         cmd.expect(prompt_re, timeout=COMMAND_TIMEOUT)
@@ -476,12 +488,18 @@ def test_ls_flow_control():
         # :ls v -> Vertical flow
         cmd.sendline(":ls v")
         cmd.expect("ls:.*?flow=v", timeout=COMMAND_TIMEOUT)
-        # Consume prompt
-        cmd.expect(prompt_re, timeout=COMMAND_TIMEOUT)
+        sync_shell()
 
-        cmd.sendline(f'ls {fixtures_dir}')
+        cmd.sendline('ls')
         
-        # Capture full output
+        # Capture full output by waiting for prompt
+        cmd.expect(prompt_re, timeout=COMMAND_TIMEOUT)
+        output_v = cmd.before
+        sync_shell()
+
+        cmd.sendline('ls')
+        
+        # Capture full output by waiting for prompt
         cmd.expect(prompt_re, timeout=COMMAND_TIMEOUT)
         output_v = cmd.before
 
@@ -491,14 +509,12 @@ def test_ls_flow_control():
         
         if pos_data == -1 or pos_sample == -1:
                 print("FAIL: Could not find files in vertical output")
-                print(f"DEBUG Output: {output_v}")
                 return False
 
         if pos_sample < pos_data:
                 print("PASS: Vertical flow verified (sample.txt < data.csv)")
         else:
                 print(f"FAIL: Vertical flow check failed. Expected sample.txt < data.csv. Indices: sample={pos_sample}, data={pos_data}")
-                print(f"DEBUG Output:\n{output_v}")
                 return False
 
         # Reset defaults
