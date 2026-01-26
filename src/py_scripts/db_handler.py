@@ -4,12 +4,8 @@ DAIS Database Handler Module.
 This script bridges the C++ Engine with Python's database capabilities.
 It is designed to be:
 1.  **Robust**: Handles large datasets via streaming to avoid OOM.
-2.  **Flexible**: Supports SQLite and DuckDB (expandable to others).
-3.  **User-Centric**: Respects user's PAGER preferences and supports exports.
-
-Protocol:
-- Input: Receives a raw query string from C++.
-- Output: Returns a JSON string with {"status", "action", "data", "pager"}.
+2.  **Flexible**: Uses an Adapter pattern for easy database extension.
+3.  **Context-Aware**: Reads .env files from the current working directory.
 """
 
 import sys
@@ -18,49 +14,205 @@ import json
 import csv
 import tempfile
 import sqlite3
+import abc
 
-# Optional: DuckDB Support
-try:
-    import duckdb
-    HAS_DUCKDB = True
-except ImportError:
-    HAS_DUCKDB = False
+# =============================================================================
+# UTILITIES
+# =============================================================================
 
-
-def get_connection(db_type, db_source):
+def load_env_file(cwd):
     """
-    Factory method to establish a database connection.
+    Locates and parses the nearest .env file by traversing up the directory tree.
+    Priority: 
+    1. Current Directory
+    2. Parent Directories (recursive)
+    3. Stops at User Home or Filesystem Root
+    """
+    def parse_env(path):
+        env_vars = {}
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith('#'):
+                        continue
+                    if '=' in line:
+                        key, value = line.split('=', 1)
+                        value = value.strip()
+                        if (value.startswith('"') and value.endswith('"')) or \
+                           (value.startswith("'") and value.endswith("'")):
+                            value = value[1:-1]
+                        env_vars[key.strip()] = value
+        except Exception:
+            pass
+        return env_vars
+
+    current = os.path.abspath(cwd)
+    user_home = os.path.abspath(os.path.expanduser("~"))
+    root = os.path.abspath(os.sep)
+
+    while True:
+        env_path = os.path.join(current, ".env")
+        if os.path.exists(env_path):
+            return parse_env(env_path)
+            
+        # Stop guards
+        if current == user_home or current == root:
+            break
+            
+        parent = os.path.dirname(current)
+        if parent == current: # Infinite loop guard for OS root
+            break
+        current = parent
+        
+    return {}
+
+# =============================================================================
+# ADAPTER INTERFACE
+# =============================================================================
+
+class DBAdapter(abc.ABC):
+    @abc.abstractmethod
+    def connect(self, source, **kwargs):
+        """Establishes connection to the database."""
+        pass
+
+    @abc.abstractmethod
+    def execute(self, query):
+        """Executes a query and returns cursor."""
+        pass
+        
+    @abc.abstractmethod
+    def close(self):
+        """Closes the connection."""
+        pass
+
+# =============================================================================
+# ADAPTER IMPLEMENTATIONS
+# =============================================================================
+
+class SqliteAdapter(DBAdapter):
+    def __init__(self):
+        self.conn = None
+        self.cursor = None
+
+    def connect(self, source, **kwargs):
+        self.conn = sqlite3.connect(source)
+        self.cursor = self.conn.cursor()
+
+    def execute(self, query):
+        self.cursor.execute(query)
+        return self.cursor
+
+    def close(self):
+        if self.conn:
+            self.conn.close()
+
+class DuckDbAdapter(DBAdapter):
+    def __init__(self):
+        self.conn = None
     
-    Args:
-        db_type (str): 'sqlite' or 'duckdb'.
-        db_source (str): Path to the database file or connection string.
+    def connect(self, source, **kwargs):
+        try:
+            import duckdb
+        except ImportError:
+            raise ImportError("MISSING_PKG:duckdb")
+            
+        self.conn = duckdb.connect(source)
+
+    def execute(self, query):
+        # DuckDB's execute returns the connection itself which acts as a cursor
+        return self.conn.execute(query)
+
+    def close(self):
+        # DuckDB usually auto-closes, but we can be explicit
+        if self.conn:
+            self.conn.close()
+
+class PostgresAdapter(DBAdapter):
+    def __init__(self):
+        self.conn = None
+        self.cursor = None
+
+    def connect(self, source, **kwargs):
+        try:
+            import psycopg2
+        except ImportError:
+            raise ImportError("MISSING_PKG:psycopg2-binary")
         
-    Returns:
-        Connection object (PEP-249 compliant).
+        # Map env vars DB_HOST -> host, etc.
+        # Common libpq args: host, port, user, password, dbname
+        connect_args = {}
+        if "DB_HOST" in kwargs: connect_args["host"] = kwargs["DB_HOST"]
+        if "DB_PORT" in kwargs: connect_args["port"] = kwargs["DB_PORT"]
+        if "DB_USER" in kwargs: connect_args["user"] = kwargs["DB_USER"]
+        if "DB_PASS" in kwargs: connect_args["password"] = kwargs["DB_PASS"]
+        if "DB_NAME" in kwargs: connect_args["dbname"] = kwargs["DB_NAME"]
         
-    Raises:
-        ImportError: If required driver is missing.
-    """
-    if db_type == "duckdb":
-        if not HAS_DUCKDB:
-            raise ImportError(
-                "DuckDB is configured but not installed. "
-                "Please run 'pip install duckdb' to use this feature."
-            )
-        return duckdb.connect(db_source)
+        # Fallback: if 'source' looks like a DSN "postgresql://...", use it
+        if "://" in source:
+             self.conn = psycopg2.connect(source)
+        else:
+             self.conn = psycopg2.connect(**connect_args)
+             
+        self.cursor = self.conn.cursor()
+
+    def execute(self, query):
+        self.cursor.execute(query)
+        return self.cursor
+
+    def close(self):
+        if self.conn: self.conn.close()
+
+class MySqlAdapter(DBAdapter):
+    def __init__(self):
+        self.conn = None
+        self.cursor = None
+
+    def connect(self, source, **kwargs):
+        try:
+            import mysql.connector
+        except ImportError:
+            raise ImportError("MISSING_PKG:mysql-connector-python")
+
+        connect_args = {}
+        if "DB_HOST" in kwargs: connect_args["host"] = kwargs["DB_HOST"]
+        if "DB_PORT" in kwargs: connect_args["port"] = kwargs["DB_PORT"]
+        if "DB_USER" in kwargs: connect_args["user"] = kwargs["DB_USER"]
+        if "DB_PASS" in kwargs: connect_args["password"] = kwargs["DB_PASS"]
+        if "DB_NAME" in kwargs: connect_args["database"] = kwargs["DB_NAME"]
+
+        self.conn = mysql.connector.connect(**connect_args)
+        self.cursor = self.conn.cursor()
+
+    def execute(self, query):
+        self.cursor.execute(query)
+        return self.cursor
+
+    def close(self):
+        if self.conn: self.conn.close()
+
+
+# Factory
+def get_adapter(db_type):
+    if db_type == "sqlite":
+        return SqliteAdapter()
+    elif db_type == "duckdb":
+        return DuckDbAdapter()
+    elif db_type == "postgres" or db_type == "postgresql":
+        return PostgresAdapter()
+    elif db_type == "mysql":
+        return MySqlAdapter()
     else:
-        # Default to SQLite
-        # Note: We rely on sqlite3 standard library which is always available.
-        return sqlite3.connect(db_source)
+        raise ValueError(f"Unsupported DB_TYPE: {db_type}")
 
+# =============================================================================
+# CORE LOGIC
+# =============================================================================
 
-def run_query(query, db_type, db_source):
+def run_query(query, db_type, db_source, adapter_kwargs={}):
     """
-    Executes the query and formats the result for the specific action type.
-    
-    Why Streaming?
-    Loading 1M rows into memory with fetchall() creates huge latency and 
-    Risk of OOM. We use a generator to stream rows when writing to files.
+    Executes the query and formats the result.
     """
     flags = {
         "json": False,
@@ -68,20 +220,16 @@ def run_query(query, db_type, db_source):
         "no_limit": False
     }
 
-    # 1. Parse Flags via Regex/Replacement
-    # This allows flags to appear in any order.
+    # 1. Parse Flags
     import re
-    
-    # Extract --output <filename> first
+    # Extract --output <filename>
     output_match = re.search(r'--output\s+([^\s]+)', query)
     if output_match:
         flags["output"] = output_match.group(1)
-        # Flatten the query by removing the matched substring
         query = query[:output_match.start()] + query[output_match.end():]
     else:
         flags["output"] = None
 
-    # Helper to pop boolean flags anywhere in string
     def pop_flag(q, flag):
         if flag in q:
             return q.replace(flag, ""), True
@@ -94,26 +242,25 @@ def run_query(query, db_type, db_source):
     clean_query = query.strip()
     
     # 2. Safety Limit
-    # If no explicit limit override is provided, we force a LIMIT to prevent
-    # accidental valid queries from freezing the terminal.
     if not flags["json"] and not flags["csv"] and not flags["no_limit"]:
         low_query = clean_query.lower()
         if "limit" not in low_query:
             clean_query += " LIMIT 1000"
 
+    # 3. Execution
+    adapter = None
     try:
-        conn = get_connection(db_type, db_source)
-        cursor = conn.cursor()
-        cursor.execute(clean_query)
+        adapter = get_adapter(db_type)
+        adapter.connect(db_source, **adapter_kwargs)
+        cursor = adapter.execute(clean_query)
         
-        # Extract headers if available
+        # Extract headers
         headers = [d[0] for d in cursor.description] if cursor.description else []
 
-        # 3. Generator for Streaming
-        # This keeps memory usage constant (O(1)) regardless of result size.
+        # Generator for Streaming
         def row_generator():
             while True:
-                # Fetch in batches of 1000 to reduce IPC overhead
+                # fetchmany is standard DB-API 2.0
                 batch = cursor.fetchmany(1000)
                 if not batch:
                     break
@@ -121,10 +268,7 @@ def run_query(query, db_type, db_source):
                     yield row
 
         # --- EXPORT ACTIONS ---
-        
         if flags["json"]:
-            # Action: Export to JSON
-            # Decide target: User file OR Temp file
             if flags.get("output"):
                 target_path = flags["output"]
                 action = "print"
@@ -132,33 +276,25 @@ def run_query(query, db_type, db_source):
                 message = f"Saved JSON to: {target_path}"
             else:
                 fd, target_path = tempfile.mkstemp(prefix="dais_db_", suffix=".json", text=True)
-                os.close(fd) # Close handle, open as needed below
+                os.close(fd)
                 action = "page"
                 pager = "cat"
-                message = target_path # Data for page action is the path
+                message = target_path
 
-            # Write Data
             with open(target_path, 'w', encoding='utf-8') as f:
                 f.write("[\n")
                 first = True
                 for row in row_generator():
-                    if not first:
-                        f.write(",\n")
+                    if not first: f.write(",\n")
                     item = dict(zip(headers, row))
                     f.write(json.dumps(item, default=str))
                     first = False
                 f.write("\n]")
             
-            conn.close()
-            return json.dumps({
-                "status": "success", 
-                "action": action, 
-                "data": message, 
-                "pager": pager
-            })
+            adapter.close()
+            return json.dumps({"status": "success", "action": action, "data": message, "pager": pager})
 
         if flags["csv"]:
-            # Action: Export to CSV
             if flags.get("output"):
                 target_path = flags["output"]
                 action = "print"
@@ -171,49 +307,31 @@ def run_query(query, db_type, db_source):
                 pager = "cat"
                 message = target_path
 
-            # Write Data
             with open(target_path, 'w', encoding='utf-8', newline='') as f:
                 writer = csv.writer(f)
                 writer.writerow(headers)
                 for row in row_generator():
                     writer.writerow(row)
             
-            conn.close()
-            return json.dumps({
-                "status": "success", 
-                "action": action, 
-                "data": message, 
-                "pager": pager
-            })
+            adapter.close()
+            return json.dumps({"status": "success", "action": action, "data": message, "pager": pager})
 
-        # --- VIEW ACTION (Table) ---
-        
-        # For the interactive table view, we revert to fetchall() currently.
-        # Why? Aligning columns (Pretty Printing) requires global knowledge of max width.
-        # Since we enforce LIMIT 1000 by default, this is safe in memory (kB size).
-        # If user passes --no-limit, they accept the memory/latency cost.
+        # --- VIEW ACTION ---
         rows = cursor.fetchall()
-        conn.close()
+        adapter.close()
 
         if not rows:
-            return json.dumps({
-                "status": "success", 
-                "action": "print", 
-                "data": "No results."
-            })
+            return json.dumps({"status": "success", "action": "print", "data": "No results."})
 
-        # Calculate column widths
+        # Calculate widths
         widths = [len(h) for h in headers]
-        str_rows = [] # Cache stringified version
-        
+        str_rows = []
         for row in rows:
-            # Handle NULLs gracefully
             s_row = [str(cell) if cell is not None else "NULL" for cell in row]
             str_rows.append(s_row)
             for i, cell in enumerate(s_row):
                 widths[i] = max(widths[i], len(cell))
 
-        # Formatter
         def format_line(r, w_list):
             return " | ".join(f"{c:<{w}}" for c, w in zip(r, w_list))
 
@@ -226,75 +344,111 @@ def run_query(query, db_type, db_source):
 
         full_output = "\n".join(output_lines)
         
-        # Decision: Print vs Page
-        # If the output is longer than standard terminal height (~50),
-        # or if the user requests it, we use the PAGER.
         if len(output_lines) > 50:
             fd, path = tempfile.mkstemp(prefix="dais_db_", suffix=".txt", text=True)
             with os.fdopen(fd, 'w', encoding='utf-8') as f:
                 f.write(full_output)
-            
-            # Detect User Preference
-            # Default to 'less -S' (chop long lines) for best table viewing experience.
             user_pager = os.environ.get("PAGER", "less -S")
-            
-            return json.dumps({
-                "status": "success", 
-                "action": "page", 
-                "data": path, 
-                "pager": user_pager
-            })
+            return json.dumps({"status": "success", "action": "page", "data": path, "pager": user_pager})
         else:
-            return json.dumps({
-                "status": "success", 
-                "action": "print", 
-                "data": full_output
-            })
+            return json.dumps({"status": "success", "action": "print", "data": full_output})
 
+    except ImportError as e:
+        # Catch our custom missing package error or others
+        msg = str(e)
+        
+        # RETRY MECHANISM: 
+        # If import failed, it might be because the package is in the shell's python (e.g. Conda/Venv)
+        # but not in our embedded python's path.
+        if "MISSING_PKG" in msg and not getattr(sys, "_dais_path_synced", False):
+            try:
+                import subprocess
+                # Ask the active shell python for its sys.path
+                # We use the current shell's 'python3' command
+                output = subprocess.check_output(
+                    ["python3", "-c", "import sys; print(chr(10).join(sys.path))"], 
+                    text=True, 
+                    stderr=subprocess.DEVNULL
+                )
+                
+                added_something = False
+                for p in output.splitlines():
+                    p = p.strip()
+                    if p and os.path.isdir(p) and p not in sys.path:
+                        sys.path.append(p)
+                        added_something = True
+                
+                if added_something:
+                    import importlib
+                    importlib.invalidate_caches()
+                
+                # Mark as synced to prevent infinite recursion
+                sys._dais_path_synced = True
+                
+                # RECURSIVE RETRY
+                return run_query(query, db_type, db_source, adapter_kwargs)
+                
+            except Exception:
+                # If sync fails (e.g. no python3), just proceed to error
+                pass
+
+        if "MISSING_PKG" in msg:
+            pkg = msg.split(":")[1]
+            return json.dumps({"status": "missing_pkg", "package": pkg})
+        return json.dumps({"status": "error", "message": msg})
     except Exception as e:
-        return json.dumps({
-            "status": "error", 
-            "message": str(e)
-        })
+        if adapter: adapter.close()
+        return json.dumps({"status": "error", "message": str(e)})
 
 
-def handle_command(cmd_input):
+def handle_command(cmd_input, cwd):
     """
     Main entry point invoked by C++ engine.
     
     Args:
-        cmd_input (str): The string following ':db ' typed by the user.
-        
-    Returns:
-        str: JSON string response.
+        cmd_input (str): The query string.
+        cwd (str): Current working directory of the shell.
     """
     try:
-        # Import config dynamically to allow hot-ish reloading (if supported by Python logic)
-        # and to access the user's settings.
+        # Ensure we can see newly installed packages (pip install from shell)
+        import importlib
+        import sys
+        
+        # Nuclear option: Clear the importer cache completely
+        # This forces Python to re-scan directories for new packages
+        sys.path_importer_cache.clear() 
+        importlib.invalidate_caches()
+
+        # Load .env from CWD if present
+        env_vars = load_env_file(cwd)
+        
+        # Import config to get defaults
         try:
             import config
         except ImportError:
-            return json.dumps({
-                "status": "error", 
-                "message": "Configuration Error: Could not import 'config.py'."
-            })
+            return json.dumps({"status": "error", "message": "Configuration Error: Could not import 'config.py'."})
 
         query = cmd_input.strip()
 
         # 1. Expand Saved Queries
-        # This allows users to alias complex SQL to simple keys.
         if hasattr(config, "DB_QUERIES") and isinstance(config.DB_QUERIES, dict):
             if query in config.DB_QUERIES:
                 query = config.DB_QUERIES[query]
 
         # 2. Get Connection Details
-        db_type = getattr(config, "DB_TYPE", "sqlite")
-        db_source = getattr(config, "DB_SOURCE", ":memory:")
+        # Priority: .env > config.py
+        
+        db_type = env_vars.get("DB_TYPE", getattr(config, "DB_TYPE", "sqlite"))
+        db_source = env_vars.get("DB_SOURCE", getattr(config, "DB_SOURCE", ":memory:"))
+        
+        # Extra args for adapters (host/user/pass)
+        adapter_kwargs = {}
+        for k, v in env_vars.items():
+            if k.startswith("DB_") and k not in ["DB_TYPE", "DB_SOURCE"]:
+                # Pass DB_HOST -> host, etc. (implementation dependent)
+                adapter_kwargs[k] = v
 
-        return run_query(query, db_type, db_source)
+        return run_query(query, db_type, db_source.replace("_PROJECT_ROOT", cwd) if "_PROJECT_ROOT" in db_source else db_source, adapter_kwargs)
 
     except Exception as e:
-         return json.dumps({
-            "status": "error", 
-            "message": f"Unexpected Handler Error: {str(e)}"
-        })
+         return json.dumps({"status": "error", "message": f"Unexpected Handler Error: {str(e)}"})

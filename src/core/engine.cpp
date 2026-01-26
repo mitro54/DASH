@@ -13,6 +13,7 @@
 #include "core/command_handlers.hpp"
 #include "core/help_text.hpp"
 #include <thread>
+#include <chrono>
 #include <array>
 #include <string>
 #include <iostream> // Needed for std::cout, std::cerr
@@ -1227,16 +1228,50 @@ namespace dais::core {
             // 1. Invoke Python Handler
             // We use the embedded interpreter to import and run the script.
             py::module_ handler = py::module_::import("db_handler");
-            std::string json_result = handler.attr("handle_command")(query).cast<std::string>();
+            
+            // Pass CWD to Python so it can find local .env and config files
+            std::string cwd_str = shell_cwd_.string();
+            std::string json_result = handler.attr("handle_command")(query, cwd_str).cast<std::string>();
             
             // 2. Parse Result
-            // We reuse the 'json' module from Python to parse the string back into an object.
-            // This avoids adding a C++ JSON dependency (like nlohmann/json) just for this feature.
             py::module_ json = py::module_::import("json");
             py::object result_obj = json.attr("loads")(json_result);
             
             std::string status = result_obj["status"].cast<std::string>();
             
+            // --- HANDLING MISSING PACKAGES (Interactive Install) ---
+            if (status == "missing_pkg") {
+                std::string pkg = result_obj["package"].cast<std::string>();
+                std::cout << "\r\n[" << handlers::Theme::WARNING << "-" << handlers::Theme::RESET 
+                          << "] Missing package '" << pkg << "'. Install now? (y/N) " << std::flush;
+                
+                // Read single char response (assuming raw mode)
+                char c = 0;
+                // Wait for input loop
+                while (true) {
+                    if (read(STDIN_FILENO, &c, 1) > 0) {
+                        break;
+                    }
+                    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                }
+
+                if (c == 'y' || c == 'Y') {
+                    std::cout << "Y\r\n"; // Echo
+                    std::string cmd = "pip install " + pkg;
+                    
+                    // Clear the prompt line to make space for pip output
+                    const char* clear_line = "\x15"; 
+                    write(pty_.get_master_fd(), clear_line, 1);
+                    
+                    // Inject command
+                    write(pty_.get_master_fd(), cmd.c_str(), cmd.size());
+                    write(pty_.get_master_fd(), "\n", 1); 
+                } else {
+                    std::cout << "N\r\n";
+                }
+                return;
+            }
+
             if (status == "error") {
                 std::string msg = result_obj["message"].cast<std::string>();
                 std::cout << "\r\n[" << handlers::Theme::ERROR << "DB" << handlers::Theme::RESET 
@@ -1250,8 +1285,6 @@ namespace dais::core {
             
             if (action == "print") {
                 // ACTION: Print directly to terminal
-                // We must handle newline conversions manually because the terminal
-                // is likely in raw mode.
                 std::cout << "\r\n";
                 
                 std::string formatted = data;
@@ -1264,51 +1297,32 @@ namespace dais::core {
                 
             } else if (action == "page") {
                 // ACTION: Open in Pager (less)
-                // The 'data' field contains the path to the temporary file.
-                
                 std::string pager_cmd = "less -S"; // Default fallback
                 if (result_obj.contains("pager")) {
                     pager_cmd = result_obj["pager"].cast<std::string>();
                 }
-
-                // Robust Cleanup Construction:
-                // We use a subshell pipeline: (cat file && rm file) | pager
-                // - 'cat file': Reads the content into the pipe.
-                // - '&& rm file': Deletes the file immediately after cat finishes reading.
-                // - '| pager': Receives the content via stdin.
-                //
-                // Why? This decouples the file existence from the pager's lifetime.
-                // The file is gone from disk mere milliseconds after the command starts,
-                // residing entirely in the pipe buffer and pager memory.
-                // This prevents "garbage files" if the user suspends (Ctrl-Z) the pager.
+                // Robust Cleanup Construction: (cat f && rm f) | pager
                 std::string cmd = "(cat \"" + data + "\" && rm \"" + data + "\") | " + pager_cmd;
                 
-                // Clear the current command line visually (Ctrl+U equivalent)
+                // Clear the current command line visually
                 const char* clear_line = "\x15"; 
                 write(pty_.get_master_fd(), clear_line, 1);
                 
                 // Inject the constructed command into the shell
                 write(pty_.get_master_fd(), cmd.c_str(), cmd.size());
                 
-                // Send newline to execute
-                // Note: The caller (process_user_input) will handle the loop continue
-                // to avoid double-processing this command.
-                 // We don't write \n here because we do it in the caller loop
-                 // actually, we DO need to write it here because we extracted this method.
-                 // But wait, the caller does:
-                 // handle_db_command(); cmd_accum.clear(); write(..., "\n", 1);
-                 // So we just inject the TEXT of the command, and let the caller hit Enter?
-                 // NO. The caller hits Enter to give a *new prompt*.
-                 // IF we want the shell to run our injected command, we must hit Enter HERE.
-                 // AND we must tell the caller NOT to hit enter again (or it runs an empty command).
-                 // OR we let the caller hit enter.
-                 
-                 // Current caller flow:
-                 // handle_db_command(query);
-                 // cmd_accumulator.clear();
-                 // write(..., "\n", 1); <--- This triggers the injected command!
-                 
-                 // So we just inject the command string here.
+                // Note: The caller (process_user_input) will send a newline to trigger a fresh prompt.
+                // However, for us to EXECUTE this injected command, we actually need to hit Enter for the user.
+                // But if we do, the caller's subsequent newline might just run an empty command.
+                // Let's rely on the user seeing the typed command and hitting Enter? 
+                // NO, for 'page' action, we usually want it instant.
+                // Let's inject newline here.
+                // write(pty_.get_master_fd(), "\n", 1);
+                // IF we do that, we must ensure the caller doesn't mess it up.
+                // Caller logic: `handle_db_command(query); cmd_accumulator.clear(); write(..., "\n", 1);`
+                // The caller sends newline AFTER we return.
+                // So if we inject the command string here, the caller's newline effectively executes it!
+                // PERFECT.
             }
             
         } catch (const std::exception& e) {
