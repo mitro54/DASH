@@ -22,8 +22,68 @@ on:
 
 jobs:
   # ==========================================================================
-  # Linux Docker Builds
+  # Database Logic Tests
   # ==========================================================================
+  db-logic-tests:
+    name: Database Logic
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: test_user
+          POSTGRES_PASSWORD: test_password
+          POSTGRES_DB: test_db
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root_password
+          MYSQL_DATABASE: test_db
+          MYSQL_USER: test_user
+          MYSQL_PASSWORD: test_password
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=3
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.10"
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r tests/requirements.txt
+
+      - name: Run Logic Tests
+        env:
+          DB_HOST_PG: localhost
+          DB_PORT_PG: 5432
+          DB_USER_PG: test_user
+          DB_PASS_PG: test_password
+          DB_NAME_PG: test_db
+          DB_HOST_MY: 127.0.0.1
+          DB_PORT_MY: 3306
+          DB_USER_MY: test_user
+          DB_PASS_MY: test_password
+          DB_NAME_MY: test_db
+        run: |
+          python tests/functional/test_db_logic.py
   linux-docker:
     name: Build on ${{ matrix.distro }}
     runs-on: ubuntu-latest
@@ -202,13 +262,15 @@ jobs:
   test-summary:
     name: All Tests Summary
     runs-on: ubuntu-latest
-    needs: [linux-docker, macos, coverage]
+    needs: [linux-docker, macos, coverage, db-logic-tests]
     if: always()
     
     steps:
       - name: Check test results
         run: |
-          if [ "${{ needs.linux-docker.result }}" == "failure" ] || [ "${{ needs.macos.result }}" == "failure" ]; then
+          if [ "${{ needs.linux-docker.result }}" == "failure" ] || \
+             [ "${{ needs.macos.result }}" == "failure" ] || \
+             [ "${{ needs.db-logic-tests.result }}" == "failure" ]; then
             echo "Some tests failed!"
             exit 1
           fi

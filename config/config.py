@@ -70,6 +70,19 @@ _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DB_TYPE = "sqlite"  # Change to "duckdb" for OLAP heavy lifting
 DB_SOURCE = os.path.join(_PROJECT_ROOT, "dais_test.db")
 
+# 4. DB_KEY_MAPPING: Custom Mappings for Environment Variables
+#    DAIS will look for keys in .env or os.environ in the order specified here.
+#    You can add your own custom keys (e.g. "MY_DB_HOST") to the lists.
+DB_KEY_MAPPING = {
+    "DB_TYPE": ["DB_TYPE", "DB_T", "DATABASE_TYPE", "ENGINE"],
+    "DB_SOURCE": ["DB_SOURCE", "DB_FILE", "SQLITE_DB", "DB_S"],
+    "DB_HOST": ["DB_HOST", "DB_H", "POSTGRES_HOST", "MYSQL_HOST"],
+    "DB_PORT": ["DB_PORT", "DB_P", "POSTGRES_PORT", "MYSQL_TCP_PORT"],
+    "DB_USER": ["DB_USER", "DB_U", "POSTGRES_USER", "MYSQL_USER"],
+    "DB_PASS": ["DB_PASS", "DB_PASSWORD", "POSTGRES_PASSWORD", "MYSQL_PASSWORD", "MYSQL_PWD"],
+    "DB_NAME": ["DB_NAME", "DB_N", "POSTGRES_DB", "MYSQL_DATABASE"]
+}
+
 DB_QUERIES = {
     # ----------------------------------------------------------------------
     # ALIAS                SQL QUERY

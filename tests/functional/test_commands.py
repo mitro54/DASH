@@ -430,105 +430,173 @@ def test_ls_flow_control():
         print("  SKIP: Binary not found")
         return None
 
-    fixtures_dir = None
-    candidates = [
-        './tests/fixtures',
-        '../fixtures',
-        os.path.join(os.path.dirname(__file__), '..', 'fixtures'),
-    ]
-    for path in candidates:
-        if os.path.exists(path):
-            fixtures_dir = os.path.abspath(path)
-            break
-    if not fixtures_dir:
-        print("  SKIP: Fixtures not found")
+    print("[TEST] LS Flow Control...")
+
+    binary = find_binary()
+    if not binary:
+        print("  SKIP: Binary not found")
         return None
 
-    cmd = spawn_dais(binary)
-    if not cmd:
-        return False
-
-    print(f"Testing LS flow control in '{fixtures_dir}'...")
-
-    # Helper to sync buffer with unique token
-    def sync_shell():
-        token = f"SYNC_{uuid.uuid4().hex[:8]}"
-        cmd.sendline(f"echo {token}")
-        cmd.expect(token)
-        cmd.expect(prompt_re)
-        time.sleep(0.5)
-
+    # Create distinct temp dir for 4-item grid
+    temp_grid = tempfile.mkdtemp()
     try:
-        # Define prompt regex (root # or user $)
-        prompt_re = r"[\#\$] "
+        # Create a, b, c, d to ensure sort order
+        for name in ["a.txt", "b.txt", "c.txt", "d.txt"]:
+            with open(os.path.join(temp_grid, name), 'w') as f: f.write(".")
 
-        # 1. Test Horizontal (Default/Explicit)
-        # :ls h -> Horizontal flow
+        cmd = spawn_dais(binary)
+        if not cmd: return False
+        
+        # Enforce size to guarantee 2 columns (assuming ~20 chars per column logic)
+        cmd.setwinsize(24, 80)
+        time.sleep(SHELL_INIT_DELAY)
+
+        # Helper to sync shell
+        def sync_shell():
+            token = f"SYNC_{uuid.uuid4().hex[:8]}"
+            cmd.sendline(f"echo {token}")
+            cmd.expect(token)
+            cmd.expect(r"[\#\$] ")
+            time.sleep(0.5)
+
+        # Go to temp dir
+        cmd.sendline(f'cd "{temp_grid}"')
+        sync_shell()
+
+        # 1. Horizontal (Default): a   b \n c   d
+        # Order in string: a, b, c, d
+        # Index(b) < Index(c)
         cmd.sendline(":ls h")
-        cmd.expect("ls:.*?flow=h", timeout=COMMAND_TIMEOUT)
-        sync_shell()
-
-        # Change directory to fixtures to avoid path parsing issues
-        cmd.sendline(f'cd {fixtures_dir}')
-        sync_shell()
-
-        # Run native ls (no args, uses CWD)
-        cmd.sendline('ls')
+        sync_shell() # wait for config save
         
-        # Wait for prompt relative to 'ls' command
-        cmd.expect(prompt_re, timeout=COMMAND_TIMEOUT)
-        output_h = cmd.before
+        cmd.sendline("ls")
+        cmd.expect(r"[\#\$] ")
+        out_h = cmd.before
         
-        if "data.csv" not in output_h or "sample.txt" not in output_h:
-            print("FAIL: Files missing in horizontal output")
-            print(f"DEBUG Output: {output_h}")
+        if "a.txt" not in out_h:
+            print(f"FAIL: Files missing. Output: {out_h}")
             return False
 
-        # 2. Test Vertical
-        # :ls v -> Vertical flow
+        pos_b = out_h.find("b.txt")
+        pos_c = out_h.find("c.txt")
+
+        # 2. Vertical: a   c \n b   d
+        # Order in string: a, c, b, d
+        # Index(c) < Index(b)
         cmd.sendline(":ls v")
-        cmd.expect("ls:.*?flow=v", timeout=COMMAND_TIMEOUT)
         sync_shell()
 
-        cmd.sendline('ls')
+        cmd.sendline("ls")
+        cmd.expect(r"[\#\$] ")
+        out_v = cmd.before
         
-        # Capture full output by waiting for prompt
-        cmd.expect(prompt_re, timeout=COMMAND_TIMEOUT)
-        output_v = cmd.before
-        sync_shell()
-
-        cmd.sendline('ls')
+        pos_b_v = out_v.find("b.txt")
+        pos_c_v = out_v.find("c.txt")
         
-        # Capture full output by waiting for prompt
-        cmd.expect(prompt_re, timeout=COMMAND_TIMEOUT)
-        output_v = cmd.before
-
-        # Check relative positions
-        pos_data = output_v.find("data.csv")
-        pos_sample = output_v.find("sample.txt")
+        print(f"  DEBUG: H(b={pos_b}, c={pos_c}) | V(b={pos_b_v}, c={pos_c_v})")
         
-        if pos_data == -1 or pos_sample == -1:
-                print("FAIL: Could not find files in vertical output")
-                return False
+        # Validation
+        # H: b should be before c
+        if pos_b > pos_c:
+            print("  FAIL: Horizontal flow incorrect (Expected b < c)")
+            return False
+            
+        # V: c should be before b (because 'c' is in col 2 row 1, 'b' is in col 1 row 2)
+        if pos_c_v > pos_b_v:
+             print("  FAIL: Vertical flow incorrect (Expected c < b)")
+             return False
 
-        if pos_sample < pos_data:
-                print("PASS: Vertical flow verified (sample.txt < data.csv)")
-        else:
-                print(f"FAIL: Vertical flow check failed. Expected sample.txt < data.csv. Indices: sample={pos_sample}, data={pos_data}")
-                return False
-
-        # Reset defaults
-        cmd.sendline(":ls d")
-        cmd.expect("ls:.*?defaults", timeout=COMMAND_TIMEOUT)
-
+        print("  PASS: Flow control verified")
         return True
 
     except Exception as e:
         print(f"FAIL: Exception: {e}")
         return False
-
     finally:
-        cleanup_child(cmd)
+        shutil.rmtree(temp_grid, ignore_errors=True)
+        if 'cmd' in locals():
+            cmd.close()
+
+
+# =============================================================================
+# Test Cases: DB Auto-Install
+# =============================================================================
+
+def test_db_autoinstall():
+    """
+    Test the interactive Auto-Install prompt for missing DB packages.
+    
+    Uses standard pexpect logic:
+    1. Triggers 'test_autoinstall' adapter in db_handler.py (which raises ImportError).
+    2. Expects C++ engine to catch it and prompt "(y/N)".
+    3. Sends 'y'.
+    4. Expects 'pip install ...' command injection.
+    """
+    print("[TEST] DB Auto-Install Prompt...")
+
+    binary = find_binary()
+    if not binary:
+        print("  SKIP: Binary not found")
+        return None
+
+    temp_dir = tempfile.mkdtemp()
+    
+    try:
+        # Create .env that forces the test adapter
+        with open(os.path.join(temp_dir, ".env"), "w") as f:
+            f.write("DB_TYPE=test_autoinstall\n")
+
+        child = spawn_dais_ready(binary)
+        
+        # Go to temp dir
+        # We need to ensure DAIS picks up the CWD change.
+        # But we can also pass the path if your implementation supports it? No, db_handler reads CWD.
+        # So we must cd.
+        child.sendline(f'cd "{temp_dir}"')
+        # Wait for prompt to ensure cd completed
+        child.expect(r'[\#\$] ', timeout=COMMAND_TIMEOUT)
+        
+        # Trigger DB command
+        child.sendline(':db SELECT 1')
+        
+        # Expect the prompt
+        # We use a broad slice to avoid ANSI escape sequence issues
+        try:
+            # "Install now? (y/N)" is the most unique part
+            child.expect(r"Install now\? \(y/N\)", timeout=COMMAND_TIMEOUT + 5)
+            print("  PASS: Install prompt detected")
+        except pexpect.TIMEOUT:
+            print("  FAIL: Prompt not detected")
+            print(f"DEBUG Output: {child.before}")
+            return False
+
+        # Send 'y' with newline to ensure flush on all platforms
+        child.sendline("y")
+        
+        # Expect the pip install command to be echoed/run
+        try:
+            # Look for the command injection with a flexible regex to handle PTY fragmentation/echo issues
+            child.expect(r"pip install.*dais-test-pkg", timeout=COMMAND_TIMEOUT + 5)
+            
+            # Strong verification: Wait for the pip error message to confirm it actually EXECUTED
+            # Since 'dais-test-pkg' is fake, this is the most reliable "success" signal.
+            child.expect(r"(Could not find a version|No matching distribution found)", timeout=COMMAND_TIMEOUT + 10)
+            
+            print("  PASS: pip install command triggered and executed")
+        except pexpect.TIMEOUT:
+            print("  FAIL: pip command execution not detected")
+            # Log output for debugging
+            print(f"DEBUG After Y: {child.before}")
+            return False
+
+        cleanup_child(child)
+        return True
+
+    except Exception as e:
+        print(f"  FAIL: Exception - {e}")
+        return False
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
 
 
 # =============================================================================
@@ -577,6 +645,9 @@ def main():
     # Special filenames
     results.append(('special_files', test_special_filenames()))
     
+    # DB Auto-Install Prompt
+    results.append(('db_autoinstall', test_db_autoinstall()))
+
     # LS Flow Control
     results.append(('ls_flow', test_ls_flow_control()))
 
