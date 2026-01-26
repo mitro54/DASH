@@ -15,12 +15,13 @@ import csv
 import tempfile
 import sqlite3
 import abc
+from typing import Dict, Any, Optional
 
 # =============================================================================
 # UTILITIES
 # =============================================================================
 
-def load_env_file(cwd):
+def load_env_file(cwd: str) -> Dict[str, str]:
     """
     Locates and parses the nearest .env file by traversing up the directory tree.
     Priority: 
@@ -28,7 +29,7 @@ def load_env_file(cwd):
     2. Parent Directories (recursive)
     3. Stops at User Home or Filesystem Root
     """
-    def parse_env(path):
+    def parse_env(path: str) -> Dict[str, str]:
         env_vars = {}
         try:
             with open(path, 'r', encoding='utf-8') as f:
@@ -401,6 +402,57 @@ def run_query(query, db_type, db_source, adapter_kwargs={}):
         return json.dumps({"status": "error", "message": str(e)})
 
 
+def _resolve_connection_config(env_vars: Dict[str, str], config: Optional[Any] = None) -> Dict[str, str]:
+    """
+    Helper function to resolve database connection parameters.
+    Prioritizes:
+    1. .env file value (via mapped keys)
+    2. os.environ value (via mapped keys)
+    3. config.py default value
+    """
+    resolved_config: Dict[str, str] = {}
+
+    # Default Mappings (Can be overridden in config.py)
+    mappings = getattr(config, "DB_KEY_MAPPING", {
+        "DB_TYPE": ["DB_TYPE", "DB_T", "DATABASE_TYPE", "ENGINE"],
+        "DB_SOURCE": ["DB_SOURCE", "DB_FILE", "SQLITE_DB", "DB_S"],
+        "DB_HOST": ["DB_HOST", "DB_H", "POSTGRES_HOST", "MYSQL_HOST"],
+        "DB_PORT": ["DB_PORT", "DB_P", "POSTGRES_PORT", "MYSQL_TCP_PORT"],
+        "DB_USER": ["DB_USER", "DB_U", "POSTGRES_USER", "MYSQL_USER"],
+        "DB_PASS": ["DB_PASS", "DB_PASSWORD", "POSTGRES_PASSWORD", "MYSQL_PASSWORD", "MYSQL_PWD"],
+        "DB_NAME": ["DB_NAME", "DB_N", "POSTGRES_DB", "MYSQL_DATABASE"]
+    })
+
+    def get_config_val(key: str) -> Optional[Any]:
+        return getattr(config, key, None) if config else None
+
+    # Iterate over canonical keys we care about
+    for canonical, aliases in mappings.items():
+        val = None
+        
+        # A. Search .env (Highest Priority)
+        for alias in aliases:
+            if alias in env_vars:
+                val = env_vars[alias]
+                break
+        
+        # B. Search os.environ (System Env)
+        if val is None:
+            for alias in aliases:
+                if alias in os.environ:
+                    val = os.environ[alias]
+                    break
+        
+        # C. Fallback to config.py
+        if val is None:
+            val = get_config_val(canonical)
+        
+        if val is not None:
+            resolved_config[canonical] = str(val)
+
+    return resolved_config
+
+
 def handle_command(cmd_input, cwd):
     """
     Main entry point invoked by C++ engine.
@@ -422,31 +474,31 @@ def handle_command(cmd_input, cwd):
         # Load .env from CWD if present
         env_vars = load_env_file(cwd)
         
-        # Import config to get defaults
+        # Import config to get defaults / mappings
         try:
             import config
         except ImportError:
-            return json.dumps({"status": "error", "message": "Configuration Error: Could not import 'config.py'."})
+            config = None
+
+        # 2. Resolve Connection Details with Key Mappings
+        resolved_config = _resolve_connection_config(env_vars, config)
+
+        # Set defaults if still missing
+        db_type = resolved_config.get("DB_TYPE", "sqlite")
+        db_source = resolved_config.get("DB_SOURCE", ":memory:")
+        
+        # Extra args for adapters (host/user/pass)
+        adapter_kwargs = {}
+        for k, v in resolved_config.items():
+            if k not in ["DB_TYPE", "DB_SOURCE"]:
+                adapter_kwargs[k] = v
 
         query = cmd_input.strip()
 
         # 1. Expand Saved Queries
-        if hasattr(config, "DB_QUERIES") and isinstance(config.DB_QUERIES, dict):
+        if config and hasattr(config, "DB_QUERIES") and isinstance(config.DB_QUERIES, dict):
             if query in config.DB_QUERIES:
                 query = config.DB_QUERIES[query]
-
-        # 2. Get Connection Details
-        # Priority: .env > config.py
-        
-        db_type = env_vars.get("DB_TYPE", getattr(config, "DB_TYPE", "sqlite"))
-        db_source = env_vars.get("DB_SOURCE", getattr(config, "DB_SOURCE", ":memory:"))
-        
-        # Extra args for adapters (host/user/pass)
-        adapter_kwargs = {}
-        for k, v in env_vars.items():
-            if k.startswith("DB_") and k not in ["DB_TYPE", "DB_SOURCE"]:
-                # Pass DB_HOST -> host, etc. (implementation dependent)
-                adapter_kwargs[k] = v
 
         return run_query(query, db_type, db_source.replace("_PROJECT_ROOT", cwd) if "_PROJECT_ROOT" in db_source else db_source, adapter_kwargs)
 

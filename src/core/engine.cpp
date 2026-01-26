@@ -967,6 +967,7 @@ namespace dais::core {
                                 std::string query = cmd_accumulator.length() > 3 
                                     ? cmd_accumulator.substr(4) : "";
                                 
+                                sync_child_cwd(); // Ensure we use the freshly updated CWD
                                 handle_db_command(query);
                                 
                                 cmd_accumulator.clear();
