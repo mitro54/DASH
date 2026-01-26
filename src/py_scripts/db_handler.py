@@ -155,7 +155,7 @@ class PostgresAdapter(DBAdapter):
              self.conn = psycopg2.connect(source)
         else:
              self.conn = psycopg2.connect(**connect_args)
-             
+        self.conn.autocommit = True
         self.cursor = self.conn.cursor()
 
     def execute(self, query):
@@ -184,6 +184,7 @@ class MySqlAdapter(DBAdapter):
         if "DB_NAME" in kwargs: connect_args["database"] = kwargs["DB_NAME"]
 
         self.conn = mysql.connector.connect(**connect_args)
+        self.conn.autocommit = True
         self.cursor = self.conn.cursor()
 
     def execute(self, query):
@@ -318,6 +319,12 @@ def run_query(query, db_type, db_source, adapter_kwargs={}):
             return json.dumps({"status": "success", "action": action, "data": message, "pager": pager})
 
         # --- VIEW ACTION ---
+        # If cursor.description is None, this was a DDL/DML statement (INSERT, UPDATE, CREATE)
+        # that returns no rows. We should report success instead of trying to fetch.
+        if not cursor.description:
+            adapter.close()
+            return json.dumps({"status": "success", "action": "print", "data": "Command executed successfully."})
+
         rows = cursor.fetchall()
         adapter.close()
 
