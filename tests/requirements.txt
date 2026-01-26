@@ -1,0 +1,5 @@
+pytest
+psycopg2-binary
+mysql-connector-python
+duckdb
+python-dotenv
