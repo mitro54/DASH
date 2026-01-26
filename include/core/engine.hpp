@@ -61,6 +61,13 @@ namespace dais::core {
         bool ls_dirs_first = true;            ///< Group directories before files
         std::string ls_flow = "h";            ///< "h" (horizontal) or "v" (vertical)
         int ls_padding = 4;                   ///< Grid padding (spaces between columns)
+
+        // =====================================================================
+        // DB CONFIG
+        // =====================================================================
+        std::string db_type = "sqlite";       ///< "sqlite" or "duckdb"
+        std::string db_source = "";           ///< Path to DB file
+        // Note: Saved queries are handled in Python to keep C++ simple
     };
 
     class Engine {
@@ -160,5 +167,11 @@ namespace dais::core {
         void save_history_entry(const std::string& cmd);  ///< Append to file
         void show_history(const std::string& args); ///< Handle :history command
         void navigate_history(int direction, std::string& current_line); ///< Arrow key nav
+        
+        /**
+         * @brief Handles the execution of the :db command module.
+         * Bridges C++ engine with Python db_handler.
+         */
+        void handle_db_command(const std::string& query);
     };
 }

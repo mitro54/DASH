@@ -40,6 +40,56 @@ DATA_EXTENSIONS = [
 ]
 
 # ==================================================================================
+# DATABASE CONFIGURATION (:db)
+# ==================================================================================
+# The :db command allows you to query databases directly from the terminal.
+#
+# REQUIREMENTS:
+# - SQLite: Built-in (no install needed).
+# - DuckDB: Requires 'pip install duckdb' in your environment.
+#
+# USAGE:
+#   :db SELECT * FROM users                 (Default: Tables, LIMIT 1000)
+#   :db SELECT * FROM users --json          (Export as JSON)
+#   :db SELECT * FROM users --csv           (Export as CSV)
+#   :db SELECT * FROM users --output f.json (Save JSON to file directly)
+#   :db SELECT * FROM users --no-limit      (Unrestricted fetch - Careful!)
+#   :db active_users                        (Runs saved 'active_users' query)
+#
+# CONFIGURATION:
+# 1. DB_TYPE:   "sqlite" or "duckdb"
+# 2. DB_SOURCE: Path to the database file.
+#               Tip: Use os.path.join(_PROJECT_ROOT, "file.db") for portability.
+# 3. DB_QUERIES: Dictionary of "Saved Queries" (Aliases).
+#                Allows you to create short aliases for complex SQL queries.
+#                The dict key is the alias you type, the value is the SQL run.
+
+import os
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+DB_TYPE = "sqlite"  # Change to "duckdb" for OLAP heavy lifting
+DB_SOURCE = os.path.join(_PROJECT_ROOT, "dais_test.db")
+
+DB_QUERIES = {
+    # ----------------------------------------------------------------------
+    # ALIAS                SQL QUERY
+    # ----------------------------------------------------------------------
+    
+    # Simple alias to avoid typing "SELECT * FROM ..."
+    # Usage: :db users
+    "users": "SELECT * FROM users",
+    
+    # Complex query with flags aliased to a simple name
+    # You can still append flags at runtime (e.g. :db heavy_report --json)
+    # Usage: :db heavy_report --csv
+    "heavy_report": "SELECT level, Message FROM logs WHERE level='ERROR' LIMIT 5000",
+    
+    # Analytical query
+    # Usage: :db error_stats
+    "error_stats": "SELECT level, COUNT(*) as count FROM logs GROUP BY level"
+}
+
+# ==================================================================================
 # LS SORTING
 # ==================================================================================
 # Configure how 'ls' output is sorted.
