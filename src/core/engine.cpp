@@ -227,6 +227,14 @@ namespace dais::core {
                 if (sort.contains("flow")) config_.ls_flow = sort["flow"].cast<std::string>();
             }
 
+            // 7. DB CONFIGURATION
+            if (py::hasattr(conf_module, "DB_TYPE")) {
+                config_.db_type = conf_module.attr("DB_TYPE").cast<std::string>();
+            }
+            if (py::hasattr(conf_module, "DB_SOURCE")) {
+                config_.db_source = conf_module.attr("DB_SOURCE").cast<std::string>();
+            }
+
             // Debug Print
             std::cout << "[" << handlers::Theme::NOTICE << "-" << handlers::Theme::RESET 
                       << "] Config loaded successfully.\n";
@@ -951,6 +959,19 @@ namespace dais::core {
                                 write(pty_.get_master_fd(), "\n", 1);
                                 continue;
                             }
+
+                            // 6. DB Command
+                            // :db <query> or :db <saved_query_key>
+                            if (cmd_accumulator.starts_with(":db")) {
+                                std::string query = cmd_accumulator.length() > 3 
+                                    ? cmd_accumulator.substr(4) : "";
+                                
+                                handle_db_command(query);
+                                
+                                cmd_accumulator.clear();
+                                write(pty_.get_master_fd(), "\n", 1);
+                                continue;
+                            }
                         }
 
                         trigger_python_hook("on_command", cmd_accumulator);
@@ -1178,5 +1199,121 @@ namespace dais::core {
         
         // Update internal state - shell will see this when Enter is pressed
         current_line = new_content;
+    }
+
+    /**
+     * @brief Handles the execution of the :db command module.
+     * 
+     * This method acts as a bridge between the C++ engine and the Python
+     * 'db_handler' script. It avoids reinventing DB drivers in C++ by
+     * leveraging the embedded Python environment.
+     * 
+     * Rationale for JSON & Pager Strategy:
+     * - We return JSON from Python because it is structured and easy to parse
+     *   via the same Python interpreter (using json.loads).
+     * - For large results, we use a "pager" strategy where Python writes to
+     *   a temp file and C++ injects a 'less' command. This keeps DAIS's
+     *   render loop simple and leverages the robust, native 'less' pager
+     *   for search/scroll functionality, avoiding a complex TUI implementation.
+     */
+    void Engine::handle_db_command(const std::string& query) {
+        if (query.empty()) {
+            std::cout << "\r\n[" << handlers::Theme::WARNING << "-" << handlers::Theme::RESET 
+                      << "] Usage: :db <sql_query> OR :db <saved_query_name>\r\n" << std::flush;
+            return;
+        }
+
+        try {
+            // 1. Invoke Python Handler
+            // We use the embedded interpreter to import and run the script.
+            py::module_ handler = py::module_::import("db_handler");
+            std::string json_result = handler.attr("handle_command")(query).cast<std::string>();
+            
+            // 2. Parse Result
+            // We reuse the 'json' module from Python to parse the string back into an object.
+            // This avoids adding a C++ JSON dependency (like nlohmann/json) just for this feature.
+            py::module_ json = py::module_::import("json");
+            py::object result_obj = json.attr("loads")(json_result);
+            
+            std::string status = result_obj["status"].cast<std::string>();
+            
+            if (status == "error") {
+                std::string msg = result_obj["message"].cast<std::string>();
+                std::cout << "\r\n[" << handlers::Theme::ERROR << "DB" << handlers::Theme::RESET 
+                          << "] " << msg << "\r\n" << std::flush;
+                return;
+            }
+
+            // 3. Handle Actions
+            std::string action = result_obj["action"].cast<std::string>();
+            std::string data = result_obj["data"].cast<std::string>();
+            
+            if (action == "print") {
+                // ACTION: Print directly to terminal
+                // We must handle newline conversions manually because the terminal
+                // is likely in raw mode.
+                std::cout << "\r\n";
+                
+                std::string formatted = data;
+                size_t pos = 0;
+                while ((pos = formatted.find("\n", pos)) != std::string::npos) {
+                    formatted.replace(pos, 1, "\r\n");
+                    pos += 2;
+                }
+                std::cout << formatted << "\r\n" << std::flush;
+                
+            } else if (action == "page") {
+                // ACTION: Open in Pager (less)
+                // The 'data' field contains the path to the temporary file.
+                
+                std::string pager_cmd = "less -S"; // Default fallback
+                if (result_obj.contains("pager")) {
+                    pager_cmd = result_obj["pager"].cast<std::string>();
+                }
+
+                // Robust Cleanup Construction:
+                // We use a subshell pipeline: (cat file && rm file) | pager
+                // - 'cat file': Reads the content into the pipe.
+                // - '&& rm file': Deletes the file immediately after cat finishes reading.
+                // - '| pager': Receives the content via stdin.
+                //
+                // Why? This decouples the file existence from the pager's lifetime.
+                // The file is gone from disk mere milliseconds after the command starts,
+                // residing entirely in the pipe buffer and pager memory.
+                // This prevents "garbage files" if the user suspends (Ctrl-Z) the pager.
+                std::string cmd = "(cat \"" + data + "\" && rm \"" + data + "\") | " + pager_cmd;
+                
+                // Clear the current command line visually (Ctrl+U equivalent)
+                const char* clear_line = "\x15"; 
+                write(pty_.get_master_fd(), clear_line, 1);
+                
+                // Inject the constructed command into the shell
+                write(pty_.get_master_fd(), cmd.c_str(), cmd.size());
+                
+                // Send newline to execute
+                // Note: The caller (process_user_input) will handle the loop continue
+                // to avoid double-processing this command.
+                 // We don't write \n here because we do it in the caller loop
+                 // actually, we DO need to write it here because we extracted this method.
+                 // But wait, the caller does:
+                 // handle_db_command(); cmd_accum.clear(); write(..., "\n", 1);
+                 // So we just inject the TEXT of the command, and let the caller hit Enter?
+                 // NO. The caller hits Enter to give a *new prompt*.
+                 // IF we want the shell to run our injected command, we must hit Enter HERE.
+                 // AND we must tell the caller NOT to hit enter again (or it runs an empty command).
+                 // OR we let the caller hit enter.
+                 
+                 // Current caller flow:
+                 // handle_db_command(query);
+                 // cmd_accumulator.clear();
+                 // write(..., "\n", 1); <--- This triggers the injected command!
+                 
+                 // So we just inject the command string here.
+            }
+            
+        } catch (const std::exception& e) {
+            std::cout << "\r\n[" << handlers::Theme::ERROR << "DB" << handlers::Theme::RESET 
+                      << "] Python/Engine Error: " << e.what() << "\r\n" << std::flush;
+        }
     }
 }
