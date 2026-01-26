@@ -532,6 +532,79 @@ def test_ls_flow_control():
 
 
 # =============================================================================
+# Test Cases: DB Auto-Install
+# =============================================================================
+
+def test_db_autoinstall():
+    """
+    Test the interactive Auto-Install prompt for missing DB packages.
+    
+    Uses standard pexpect logic:
+    1. Triggers 'test_autoinstall' adapter in db_handler.py (which raises ImportError).
+    2. Expects C++ engine to catch it and prompt "(y/N)".
+    3. Sends 'y'.
+    4. Expects 'pip install ...' command injection.
+    """
+    print("[TEST] DB Auto-Install Prompt...")
+
+    binary = find_binary()
+    if not binary:
+        print("  SKIP: Binary not found")
+        return None
+
+    temp_dir = tempfile.mkdtemp()
+    
+    try:
+        # Create .env that forces the test adapter
+        with open(os.path.join(temp_dir, ".env"), "w") as f:
+            f.write("DB_TYPE=test_autoinstall\n")
+
+        child = spawn_dais_ready(binary)
+        
+        # Go to temp dir
+        # We need to ensure DAIS picks up the CWD change.
+        # But we can also pass the path if your implementation supports it? No, db_handler reads CWD.
+        # So we must cd.
+        child.sendline(f'cd "{temp_dir}"')
+        # Wait for prompt to ensure cd completed
+        child.expect(r'[\#\$] ', timeout=COMMAND_TIMEOUT)
+        
+        # Trigger DB command
+        child.sendline(':db SELECT 1')
+        
+        # Expect the prompt
+        # "Missing package 'dais-test-pkg'. Install now? (y/N)"
+        try:
+            child.expect(r"Missing package 'dais-test-pkg'.*Install now\? \(y/N\)", timeout=COMMAND_TIMEOUT)
+            print("  PASS: Install prompt detected")
+        except pexpect.TIMEOUT:
+            print("  FAIL: Prompt not detected")
+            print(f"DEBUG: {child.before}")
+            return False
+
+        # Send 'y'
+        child.send("y")
+        
+        # Expect the pip install command to be echoed/run
+        try:
+            # We look for the echoed command or the result
+            child.expect("pip install dais-test-pkg", timeout=COMMAND_TIMEOUT)
+            print("  PASS: pip install command triggered")
+        except pexpect.TIMEOUT:
+            print("  FAIL: pip command not triggered")
+            return False
+
+        cleanup_child(child)
+        return True
+
+    except Exception as e:
+        print(f"  FAIL: Exception - {e}")
+        return False
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+# =============================================================================
 # Main Entry Point
 # =============================================================================
 
@@ -577,6 +650,9 @@ def main():
     # Special filenames
     results.append(('special_files', test_special_filenames()))
     
+    # DB Auto-Install Prompt
+    results.append(('db_autoinstall', test_db_autoinstall()))
+
     # LS Flow Control
     results.append(('ls_flow', test_ls_flow_control()))
 

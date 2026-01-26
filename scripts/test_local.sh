@@ -54,9 +54,15 @@ export DB_USER_MY=test_user
 export DB_PASS_MY=test_password
 export DB_NAME_MY=test_db
 
+echo ">>> Running DB Logic Tests..."
 python3 tests/functional/test_db_logic.py
+LOGIC_EXIT=$?
 
-TEST_EXIT_CODE=$?
+echo ">>> Running Interactive CLI Tests..."
+python3 tests/functional/test_commands.py
+CLI_EXIT=$?
+
+TEST_EXIT_CODE=$((LOGIC_EXIT + CLI_EXIT))
 
 echo ">>> [4/4] Cleaning up..."
 docker rm -f dais-pg-local dais-my-local > /dev/null

@@ -205,8 +205,18 @@ def get_adapter(db_type):
         return PostgresAdapter()
     elif db_type == "mysql":
         return MySqlAdapter()
+    elif db_type == "test_autoinstall":
+        return TestAutoInstallAdapter()
     else:
         raise ValueError(f"Unsupported DB_TYPE: {db_type}")
+
+class TestAutoInstallAdapter(DBAdapter):
+    """Dummy adapter to trigger MISSING_PKG flow in C++."""
+    def connect(self, source, **kwargs):
+        raise ImportError("MISSING_PKG:dais-test-pkg")
+
+    def execute(self, query): pass
+    def close(self): pass
 
 # =============================================================================
 # CORE LOGIC
