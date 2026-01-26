@@ -69,6 +69,7 @@ jobs:
           docker run --rm -t dais-test:${{ matrix.distro }} bash -c "
             pip3 install pexpect --break-system-packages 2>/dev/null || pip3 install pexpect
             python3 tests/functional/test_commands.py
+            python3 tests/functional/test_db_commands.py
           "
 
       - name: Run LS tests with bash
@@ -123,6 +124,7 @@ jobs:
         run: |
           pip3 install pexpect --break-system-packages || pip3 install pexpect
           python3 tests/functional/test_commands.py
+          python3 tests/functional/test_db_commands.py
 
       - name: Run LS tests with bash
         run: |
@@ -170,6 +172,7 @@ jobs:
           # Run tests to generate coverage data
           # Tests may fail but we still want coverage of executed paths
           python3 tests/functional/test_commands.py || echo "⚠️ test_commands.py had failures"
+          python3 tests/functional/test_db_commands.py || echo "⚠️ test_db_commands.py had failures"
           python3 tests/functional/test_ls_output.py || echo "⚠️ test_ls_output.py had failures"
 
       - name: Generate coverage report
