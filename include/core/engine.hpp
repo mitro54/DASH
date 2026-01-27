@@ -2,7 +2,9 @@
 #include "core/session.hpp"
 #include "core/command_handlers.hpp"
 #include "core/thread_pool.hpp"
+#include "core/dais_agents.hpp"
 #include <pybind11/embed.h>
+#include <condition_variable>
 #include <atomic>
 #include <string_view>
 #include <string>
@@ -173,5 +175,36 @@ namespace dais::core {
          * Bridges C++ engine with Python db_handler.
          */
         void handle_db_command(const std::string& query);
+        
+        // =====================================================================
+        // REMOTE SESSION STATE (SSH)
+        // =====================================================================
+        bool is_remote_session_ = false;       ///< True if foreground is ssh/scp
+        bool remote_agent_deployed_ = false;   ///< True if we successfully injected the agent
+        std::string remote_arch_ = "";         ///< Detected remote architecture (uname -m)
+
+        void check_remote_session();           ///< Updates is_remote_session_ based on FG process
+        void deploy_remote_agent();            ///< Injects binary if missing
+
+        // =====================================================================
+        // OUTPUT CAPTURING (For Remote Commands)
+        // =====================================================================
+        // Allows the main thread to capture PTY output temporarily.
+        std::atomic<bool> capture_mode_ = false;
+        std::string capture_buffer_;
+        std::mutex capture_mutex_;
+        std::condition_variable capture_cv_;
+        
+        /**
+         * @brief Executes a command on the remote shell and captures output.
+         * Blocks until the end sentinel is found or timeout.
+         */
+        std::string execute_remote_command(const std::string& cmd, int timeout_ms = 2000);
+        
+        /**
+         * @brief Handles the complex logic of intercepting and executing 'ls' on a remote host.
+         * Incorporates agent deployment, fallback to Python, and output rendering.
+         */
+        void handle_remote_ls(const handlers::LSArgs& ls_args);
     };
 }

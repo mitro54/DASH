@@ -4,6 +4,7 @@ __pycache__
 *.db
 *.json
 *.csv
+/src/remote/build_artifacts
 
 # Prerequisites
 *.d

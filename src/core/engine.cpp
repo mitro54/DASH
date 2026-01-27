@@ -12,6 +12,7 @@
 #include "core/engine.hpp"
 #include "core/command_handlers.hpp"
 #include "core/help_text.hpp"
+#include <cstdio>
 #include <thread>
 #include <chrono>
 #include <array>
@@ -472,6 +473,16 @@ namespace dais::core {
                 ssize_t bytes_read = read(pty_.get_master_fd(), buffer.data(), buffer.size());
                 if (bytes_read <= 0) break;
 
+                // --- VISUALIZATION SAFETY ---
+                // If the main thread is running a silent command (capture_mode_),
+                // we consume the output into a buffer and DO NOT print it.
+                if (capture_mode_) {
+                    std::lock_guard<std::mutex> lock(capture_mutex_);
+                    capture_buffer_.append(buffer.data(), bytes_read);
+                    capture_cv_.notify_one();
+                    continue; // Skip printing
+                }
+
                 // --- PASS-THROUGH MODE ---
                 // Forward shell output to terminal with optional logo injection.
                 // Uses class members prompt_buffer_ and pass_through_esc_state_ for state.
@@ -728,6 +739,18 @@ namespace dais::core {
                         data_to_write += c;
                         continue;
                     }
+
+                    // --- REMOTE SESSION TRACKING ---
+                    // Actively track input when in remote session to enable command interception
+                    if (!pty_.is_shell_idle() && is_remote_session_) {
+                        if (c == 127 || c == '\b') {
+                            if (!cmd_accumulator.empty()) cmd_accumulator.pop_back();
+                        }
+                        else if (c >= 32 && c < 127) {
+                            cmd_accumulator += c;
+                        }
+                    }
+
                     // --- SMART INTERCEPTION ---
                     // Only process DAIS commands when at shell prompt (IDLE state)
                     
@@ -765,7 +788,7 @@ namespace dais::core {
                         
                         // Only save to history when shell is idle AND tab wasn't used
                         // (tab makes accumulator unreliable)
-                        if (pty_.is_shell_idle() && !tab_used_) {
+                        if (pty_.is_shell_idle()) {
                             // Save to DAIS history file (~/.dais_history)
                             if (!cmd_accumulator.empty()) {
                                 save_history_entry(cmd_accumulator);
@@ -779,76 +802,148 @@ namespace dais::core {
                         if (pty_.is_shell_idle()) {
                             // 1. Detect 'ls' command (with or without arguments)
                             if (cmd_accumulator == "ls" || cmd_accumulator.starts_with("ls ")) {
-                                // NATIVE LS: Use std::filesystem instead of shell
-                                // Benefits: No shell compatibility issues, faster, more reliable
-                                
-                                sync_child_cwd(); // Get actual child shell CWD
-                                
-                                // Parse arguments
-                                auto ls_args = handlers::parse_ls_args(cmd_accumulator);
-                                ls_args.padding = config_.ls_padding; // Apply user config padding
-                                
-                                // When tab was used, resolve partial paths using fuzzy matching
-                                std::string resolved_cmd = cmd_accumulator;
-                                if (tab_used_ && !ls_args.paths.empty() && ls_args.paths[0] != "") {
-                                    auto resolved = resolve_partial_path(ls_args.paths[0], shell_cwd_);
-                                    if (!resolved.empty() && std::filesystem::exists(resolved)) {
-                                        // Success! Update paths for ls
-                                        ls_args.paths[0] = resolved.string();
-                                        
-                                        // Reconstruct command for history
-                                        resolved_cmd = "ls";
-                                        if (ls_args.show_hidden) resolved_cmd += " -a";
-                                        resolved_cmd += " " + resolved.string();
-                                        
-                                        // Save resolved command to history
-                                        save_history_entry(resolved_cmd);
-                                        history_index_ = command_history_.size();
-                                        history_stash_.clear();
-                                    } else {
-                                        // Resolution failed - let shell handle it
-                                        // (shell has the correct tab-completed path)
-                                        ls_args.supported = false;
+                                // Check for remote session (SSH)
+                                check_remote_session();
+
+                                if (is_remote_session_) {
+                                    // --- REMOTE LS ---
+                                    if (!remote_agent_deployed_) {
+                                        deploy_remote_agent();
                                     }
-                                }
+                                    
+                                    // Parse arguments roughly (only -a supported for now)
+                                    auto ls_args = handlers::parse_ls_args(cmd_accumulator);
+                                    
+                                    // Construct Remote Command
+                                    std::string agent_cmd;
+                                    
+                                    // agent args: [-a] [path]
+                                    if (ls_args.show_hidden) agent_cmd += " -a";
+                                    for (const auto& p : ls_args.paths) {
+                                        if (!p.empty()) agent_cmd += " " + p;
+                                    }
+                                    
+                                    // Execute the agent (or python fallback if we had it)
+                                    // Note: The agent binary is usually placed at ~/.dais/agent 
+                                    // But for this MVP we might assume it's in the PATH or /tmp.
+                                    // Implementation Detail: deploy_remote_agent() should detect where it put it.
+                                    // For now, let's assume valid PATH or alias.
+                                    // Actually, let's run a Mock command if mock agent.
+                                    // Or try to run the dropped binary.
+                                    
+                                    // ACTIVE INTERCEPTION LOGIC:
+                                    if (remote_agent_deployed_) {
+                                        // Execute
+                                        // TODO: The path to agent needs to be stored by deploy_remote_agent
+                                        // For MVP we assume it's sitting in /tmp/dais_agent
+                                        std::string remote_bin = "/tmp/dais_agent_" + remote_arch_;
+                                        std::string json_out = execute_remote_command(remote_bin + agent_cmd, 3000);
+                                        
+                                        if (!json_out.empty() && json_out.starts_with("[")) {
+                                            // Render
+                                            handlers::LSFormats formats;
+                                            formats.directory = config_.ls_fmt_directory;
+                                            formats.text_file = config_.ls_fmt_text_file;
+                                            formats.data_file = config_.ls_fmt_data_file;
+                                            formats.binary_file = config_.ls_fmt_binary_file;
+                                            
+                                            handlers::LSSortConfig sort_cfg;
+                                            sort_cfg.by = config_.ls_sort_by;
+                                            sort_cfg.order = config_.ls_sort_order;
+                                            sort_cfg.dirs_first = config_.ls_dirs_first;
+                                            sort_cfg.flow = config_.ls_flow;
+                                            
+                                            std::string rendered = handlers::render_remote_ls(json_out, formats, sort_cfg);
+                                            
+                                            if (!rendered.empty()) {
+                                                // Clear line and print grid
+                                                const char* clear_and_prompt = "\x15\n"; 
+                                                write(pty_.get_master_fd(), clear_and_prompt, 2);
+                                                
+                                                write(STDOUT_FILENO, "\r\n", 2);
+                                                write(STDOUT_FILENO, rendered.c_str(), rendered.size());
+                                                
+                                                cmd_accumulator.clear();
+                                                continue; // Done!
+                                            }
+                                        }
+                                    }
+                                    
+                                    // Tier 4: Fallthrough
+                                } 
+                                else {
+                                    // --- LOCAL NATIVE LS (Existing Logic) ---
+                                    // NATIVE LS: Use std::filesystem instead of shell
+                                    // Benefits: No shell compatibility issues, faster, more reliable
+                                    
+                                    sync_child_cwd(); // Get actual child shell CWD
+                                    
+                                    // Parse arguments
+                                    auto ls_args = handlers::parse_ls_args(cmd_accumulator);
+                                    ls_args.padding = config_.ls_padding; // Apply user config padding
+                                    
+                                    // When tab was used, resolve partial paths using fuzzy matching
+                                    std::string resolved_cmd = cmd_accumulator;
+                                    if (tab_used_ && !ls_args.paths.empty() && ls_args.paths[0] != "") {
+                                        auto resolved = resolve_partial_path(ls_args.paths[0], shell_cwd_);
+                                        if (!resolved.empty() && std::filesystem::exists(resolved)) {
+                                            // Success! Update paths for ls
+                                            ls_args.paths[0] = resolved.string();
+                                            
+                                            // Reconstruct command for history
+                                            resolved_cmd = "ls";
+                                            if (ls_args.show_hidden) resolved_cmd += " -a";
+                                            resolved_cmd += " " + resolved.string();
+                                            
+                                            // Save resolved command to history
+                                            save_history_entry(resolved_cmd);
+                                            history_index_ = command_history_.size();
+                                            history_stash_.clear();
+                                        } else {
+                                            // Resolution failed - let shell handle it
+                                            // (shell has the correct tab-completed path)
+                                            ls_args.supported = false;
+                                        }
+                                    }
                                 
-                                if (ls_args.supported) {
-                                // Build format/sort config from current settings
-                                handlers::LSFormats formats;
-                                formats.directory = config_.ls_fmt_directory;
-                                formats.text_file = config_.ls_fmt_text_file;
-                                formats.data_file = config_.ls_fmt_data_file;
-                                formats.binary_file = config_.ls_fmt_binary_file;
-                                
-                                handlers::LSSortConfig sort_cfg;
-                                sort_cfg.by = config_.ls_sort_by;
-                                sort_cfg.order = config_.ls_sort_order;
-                                sort_cfg.dirs_first = config_.ls_dirs_first;
-                                sort_cfg.flow = config_.ls_flow;
-                                
-                                // Execute native ls
-                                std::string output = handlers::native_ls(
-                                    ls_args, shell_cwd_, formats, sort_cfg, thread_pool_
-                                );
-                                
-                                // Write output directly to terminal
-                                write(STDOUT_FILENO, "\r\n", 2);
-                                if (!output.empty()) {
-                                    write(STDOUT_FILENO, output.c_str(), output.size());
-                                }
-                                
-                                // Cancel the shell's pending input and trigger new prompt
-                                // The user typed "ls" which was forwarded to shell as they typed.
-                                // Send Ctrl+U (clear line) to cancel it, then newline for fresh prompt.
-                                const char* clear_and_prompt = "\x15\n"; // Ctrl+U + newline
-                                write(pty_.get_master_fd(), clear_and_prompt, 2);
-                                
-                                // Clear accumulator and skip writing command to PTY
-                                cmd_accumulator.clear();
-                                tab_used_ = false;
-                                at_line_start_ = false; // Prompt will handle this
-                                    continue; // Skip the normal PTY write below
-                                }
+                                    if (ls_args.supported) {
+                                    // Build format/sort config from current settings
+                                    handlers::LSFormats formats;
+                                    formats.directory = config_.ls_fmt_directory;
+                                    formats.text_file = config_.ls_fmt_text_file;
+                                    formats.data_file = config_.ls_fmt_data_file;
+                                    formats.binary_file = config_.ls_fmt_binary_file;
+                                    
+                                    handlers::LSSortConfig sort_cfg;
+                                    sort_cfg.by = config_.ls_sort_by;
+                                    sort_cfg.order = config_.ls_sort_order;
+                                    sort_cfg.dirs_first = config_.ls_dirs_first;
+                                    sort_cfg.flow = config_.ls_flow;
+                                    
+                                    // Execute native ls
+                                    std::string output = handlers::native_ls(
+                                        ls_args, shell_cwd_, formats, sort_cfg, thread_pool_
+                                    );
+                                    
+                                    // Write output directly to terminal
+                                    write(STDOUT_FILENO, "\r\n", 2);
+                                    if (!output.empty()) {
+                                        write(STDOUT_FILENO, output.c_str(), output.size());
+                                    }
+                                    
+                                    // Cancel the shell's pending input and trigger new prompt
+                                    // The user typed "ls" which was forwarded to shell as they typed.
+                                    // Send Ctrl+U (clear line) to cancel it, then newline for fresh prompt.
+                                    const char* clear_and_prompt = "\x15\n"; // Ctrl+U + newline
+                                    write(pty_.get_master_fd(), clear_and_prompt, 2);
+                                    
+                                    // Clear accumulator and skip writing command to PTY
+                                    cmd_accumulator.clear();
+                                    tab_used_ = false;
+                                    at_line_start_ = false; // Prompt will handle this
+                                        continue; // Skip the normal PTY write below
+                                    }
+                                } // End Local Logic
                             }
 
                             // 2. Internal Exit Commands
@@ -976,6 +1071,98 @@ namespace dais::core {
                             }
                         }
 
+                        // COMMANDS ALLOWED IN REMOTE SESSIONS
+                        if (!pty_.is_shell_idle()) {
+                            // Periodically check if we have entered/exited a remote session
+                            check_remote_session();
+                        }
+
+                        // COMMANDS ALLOWED IN REMOTE SESSIONS
+                        if (!pty_.is_shell_idle() && is_remote_session_) {
+                            // 2. Internal Exit Commands (Remote Context)
+                            // Allows cleanly exiting DAIS even if trapped in SSH
+                            if (cmd_accumulator == ":q" || cmd_accumulator == ":exit") {
+                                // "Graceful" kill of the whole DAIS session
+                                running_ = false;
+                                kill(pty_.get_child_pid(), SIGHUP); 
+                                return;
+                            }
+
+                            // 3. LS Sort Configuration Commands (Remote Context)
+                            // We also check for PURE 'ls' commands here to intercept them!
+                            // If the user typed "ls", "ls -a", "ls -l", etc.
+                            
+                            // Check for standard ls (intercept and use agent)
+                            if (cmd_accumulator == "ls" || cmd_accumulator.starts_with("ls ")) {
+                                // Parse args to see if we support it (mostly for -a)
+                                auto ls_args = handlers::parse_ls_args(cmd_accumulator);
+                                
+                                if (ls_args.supported) {
+                                    handle_remote_ls(ls_args);
+                                    
+                                    cmd_accumulator.clear();
+                                    tab_used_ = false;
+                                    continue;
+                                }
+                                // If not supported (e.g. ls -t), fall through to normal remote execution
+                            }
+
+                            if (cmd_accumulator.starts_with(":ls")) {
+                                std::string args = cmd_accumulator.substr(3);
+                                size_t start = args.find_first_not_of(' ');
+                                if (start != std::string::npos) args = args.substr(start);
+                                else args.clear();
+
+                                if (args.empty()) {
+                                    std::string msg = "\r\n[LS Customization]\r\n";
+                                    msg += "Sort By: " + config_.ls_sort_by + "\r\n";
+                                    msg += "Order: " + config_.ls_sort_order + "\r\n";
+                                    msg += "Dirs First: " + std::to_string(config_.ls_dirs_first) + "\r\n";
+                                    msg += "[USAGE] :ls [name|size|type|rows] [asc|desc]\r\n";
+                                    write(STDOUT_FILENO, msg.c_str(), msg.size());
+                                } else {
+                                    // Parse new settings... 
+                                    std::stringstream ss(args);
+                                    std::string segment;
+                                    while (ss >> segment) {
+                                        if (segment == "d" || segment == "default") {
+                                            config_.ls_sort_by = "type";
+                                            config_.ls_sort_order = "asc";
+                                            config_.ls_dirs_first = true;
+                                        } 
+                                        else if (segment == "size") config_.ls_sort_by = "size";
+                                        else if (segment == "name") config_.ls_sort_by = "name";
+                                        else if (segment == "type") config_.ls_sort_by = "type";
+                                        else if (segment == "rows") config_.ls_sort_by = "rows";
+                                        else if (segment == "asc") config_.ls_sort_order = "asc";
+                                        else if (segment == "desc") config_.ls_sort_order = "desc";
+                                    }
+                                    
+                                    std::string confirm = "\r\nUpdated: Sort=" + config_.ls_sort_by + " Order=" + config_.ls_sort_order + "\r\n";
+                                    write(STDOUT_FILENO, confirm.c_str(), confirm.size());
+                                }
+                                
+                                cmd_accumulator.clear();
+                                const char* clear_and_prompt = "\x15\n"; // Ctrl+U + newline
+                                write(pty_.get_master_fd(), clear_and_prompt, 2);
+                                continue;
+                            }
+
+                             // 4. Debug Command (Remote Context)
+                            if (cmd_accumulator == ":debug") {
+                                std::string debug_msg = "\r\n[DAIS Debug - Remote]\r\n";
+                                debug_msg += "Remote Session: " + std::string(is_remote_session_ ? "YES" : "NO") + "\r\n";
+                                debug_msg += "Arch: " + (remote_arch_.empty() ? "N/A" : remote_arch_) + "\r\n";
+                                debug_msg += "Agent: " + std::string(remote_agent_deployed_ ? "YES" : "NO") + "\r\n";
+                                
+                                write(STDOUT_FILENO, debug_msg.c_str(), debug_msg.size());
+                                cmd_accumulator.clear();
+                                const char* clear_and_prompt = "\x15\n"; // Ctrl+U + newline
+                                write(pty_.get_master_fd(), clear_and_prompt, 2);
+                                continue;
+                            }
+                        }
+
                         trigger_python_hook("on_command", cmd_accumulator);
                         cmd_accumulator.clear();
                         tab_used_ = false;  // Reset for next command
@@ -1038,6 +1225,314 @@ namespace dais::core {
     // =========================================================================
     // COMMAND HISTORY (File-Based)
     // =========================================================================
+
+    void Engine::handle_remote_ls(const handlers::LSArgs& ls_args) {
+        // 1. Cancel the user's "ls" characters that are sitting on the remote prompt
+        // Ctrl-C (\x03) can be unreliable if the shell is laggy.
+        // Safer: Ctrl-A (Start of Line) + Ctrl-K (Kill Line)
+        const char* cancel = "\x01\x0b"; 
+        write(pty_.get_master_fd(), cancel, 2);
+                
+        // 2. Deployment Check
+        deploy_remote_agent(); 
+        
+        std::string json_out;
+        
+        // 3. Prepare Arguments
+        std::string paths_arg;
+        for(const auto& p : ls_args.paths) {
+            if(!p.empty()) paths_arg += " \"" + p + "\""; // Add quotes for paths with spaces
+        }
+        if (paths_arg.empty()) paths_arg = " .";
+
+
+        // 4. Select Execution Method
+        if (remote_agent_deployed_) {
+            // A. Binary Agent (Preferred / Fast)
+            std::string agent_cmd = "./.dais/bin/agent_" + (remote_arch_.empty() ? "x86_64" : remote_arch_);
+            agent_cmd += (ls_args.show_hidden ? " -a" : "");
+            agent_cmd += paths_arg;
+            json_out = execute_remote_command(agent_cmd, 5000);
+        } else {
+            // B. Python Fallback (Tier 2 - Slower but Universal)
+            // Enhanced with file analysis logic (counts items, rows, cols)
+            std::string py_script = 
+                "import os,json,stat,sys\n"
+                "def A(p,m):\n"
+                " if stat.S_ISDIR(m):\n"
+                "  try: return 0,0,len(os.listdir(p)),False,False,False\n"
+                "  except: return 0,0,0,False,False,False\n"
+                " r=0; c=0; t=False; est=False\n"
+                " try:\n"
+                "  if os.path.getsize(p)==0: return 0,0,0,True,False,False\n"
+                "  with open(p,'rb') as f:\n"
+                "   h=f.read(1024)\n"
+                "   if b'\\0' in h: return 0,0,0,False,False,False\n"
+                "   t=True; f.seek(0)\n"
+                "   # Limit full scan to 1MB\n"
+                "   if os.path.getsize(p)>1048576:\n"
+                "    est=True\n"
+                "    buf=f.read(32768)\n"
+                "    r=buf.count(b'\\n')\n"
+                "    if r>0: r=int(r*(os.path.getsize(p)/32768.0))\n"
+                "   else:\n"
+                "    for l in f:\n"
+                "     r+=1\n"
+                "     ln=len(l.rstrip(b'\\r\\n'))\n"
+                "     if ln>c:c=ln\n"
+                " except: pass\n"
+                " return r,c,0,t,False,est\n"
+                "\n"
+                "L=[]\n"
+                "paths=sys.argv[1:] or ['.']\n"
+                "for P in paths:\n"
+                " try:\n"
+                "  for f in os.listdir(P):\n"
+                "   try:\n"
+                "    p=os.path.join(P,f)\n"
+                "    s=os.lstat(p)\n"
+                "    d=stat.S_ISDIR(s.st_mode)\n"
+                "    if not " + std::string(ls_args.show_hidden ? "True" : "False") + " and f.startswith('.'): continue\n"
+                "    r,c,cnt,txt,data,est = A(p,s.st_mode)\n"
+                "    L.append({"
+                "     'name':f,"
+                "     'is_dir':d,"
+                "     'size':s.st_size,"
+                "     'rows':r,'cols':c,'count':cnt,"
+                "     'is_text':txt,"
+                "     'is_data':data,"
+                "     'is_estimated':est"
+                "    })\n"
+                "   except:pass\n"
+                " except:pass\n"
+                "print('DAIS_JSON_START')\n" 
+                "print(json.dumps(L, separators=(',', ':')))";
+                
+            std::string py_cmd = "python3 -c \"" + py_script + "\" " + paths_arg;
+            json_out = execute_remote_command(py_cmd, 5000);
+            
+            // Robust Extraction
+            size_t start_pos = json_out.rfind("DAIS_JSON_START");
+            if (start_pos != std::string::npos) {
+                size_t nl = json_out.find('\n', start_pos);
+                if (nl != std::string::npos) {
+                    json_out = json_out.substr(nl + 1);
+                }
+            }
+        }
+        
+        // 5. Validation Check
+        size_t bracket = json_out.find('[');
+        bool valid_json = !json_out.empty() && bracket != std::string::npos;
+        
+        if (valid_json) {
+            json_out = json_out.substr(bracket);
+        }
+        
+        // 6. Fallback Behavior
+        if (!remote_agent_deployed_ && !valid_json) {
+            // Restore original command to shell (Native LS)
+            // No error message, just let standard ls run
+            write(pty_.get_master_fd(), "ls\n", 3); // Simple restore
+            return; 
+        }
+        
+        // 7. Render
+        if (valid_json) {
+            handlers::LSFormats formats;
+            formats.directory = config_.ls_fmt_directory;
+            formats.text_file = config_.ls_fmt_text_file;
+            formats.data_file = config_.ls_fmt_data_file;
+            formats.binary_file = config_.ls_fmt_binary_file;
+            
+            handlers::LSSortConfig sort_cfg;
+            sort_cfg.by = config_.ls_sort_by;
+            sort_cfg.order = config_.ls_sort_order;
+            sort_cfg.dirs_first = config_.ls_dirs_first;
+            sort_cfg.flow = config_.ls_flow;
+            
+            std::string output = handlers::render_remote_ls(json_out, formats, sort_cfg);
+            
+            if (!output.empty()) {
+                write(STDOUT_FILENO, "\r\n", 2);
+                write(STDOUT_FILENO, output.c_str(), output.size());
+            } 
+            // else: Valid JSON but empty content (empty dir or error caught in python). 
+            // Be silent like native ls.
+        } else {
+            std::string err = "\r\n[DAIS] Remote execution timed out.\r\n";
+            write(STDOUT_FILENO, err.c_str(), err.size());
+        }
+    }
+
+    void Engine::check_remote_session() {
+        std::string fg = pty_.get_foreground_process_name();
+        
+        bool was = is_remote_session_;
+        
+        // Simple heuristic: if foreground process contains "ssh", assume remote.
+        // Note: This covers "ssh", "/usr/bin/ssh", etc.
+        is_remote_session_ = (fg.find("ssh") != std::string::npos);
+        
+        if (is_remote_session_ && !was) {
+             // New session detected - reset deployment state
+             remote_agent_deployed_ = false;
+             remote_arch_ = "";
+        }
+    }
+
+    std::string Engine::execute_remote_command(const std::string& cmd, int timeout_ms) {
+        // Only run if legitimate
+        if (!pty_.is_shell_idle() && !is_remote_session_) return "";
+
+        // 1. Prepare Capture
+        {
+            std::lock_guard<std::mutex> lock(capture_mutex_);
+            capture_buffer_.clear();
+            capture_mode_ = true;
+        }
+
+        // 2. Send Command with Sentinel
+        // We use arithmetic expansion to ensure the command echo is totally different from the result
+        // Echo: "echo $(( A + B ))"
+        // Result: "Sum"
+        auto now = std::chrono::system_clock::now().time_since_epoch().count() % 1000000000; // shorter
+        long long part_a = now / 2;
+        long long part_b = now - part_a;
+        
+        std::string sentinel = "DAIS_END_" + std::to_string(now);
+        
+        // Command format: " cmd; echo DAIS_END_$(( A + B ))\n"
+        std::string full_cmd = " " + cmd + "; echo DAIS_END_$(( " + std::to_string(part_a) + " + " + std::to_string(part_b) + " ))\n";
+        
+        write(pty_.get_master_fd(), full_cmd.c_str(), full_cmd.size());
+
+        // 3. Wait for Sentinel
+        std::unique_lock<std::mutex> lock(capture_mutex_);
+        bool finished = capture_cv_.wait_for(lock, std::chrono::milliseconds(timeout_ms), [&]{
+            return capture_buffer_.find(sentinel) != std::string::npos;
+        });
+
+        // 4. Disable Capture
+        capture_mode_ = false;
+
+        if (!finished) {
+            std::string err = "\r\n[DEBUG] Timeout waiting for sentinel: " + sentinel + "\r\n";
+            write(STDOUT_FILENO, err.c_str(), err.size());
+            return ""; // Timeout
+        }
+        
+        // 5. Clean Buffer (Strip Echo and Sentinel)
+        // Captured buffer looks like: " cmd; echo DAIS_END_...\r\nOUTPUT\r\nDAIS_END_...\r\n"
+        // We want just "OUTPUT"
+        
+        std::string clean = capture_buffer_;
+        
+        // Remove the Sentinel line at the end
+        size_t sent_pos = clean.find(sentinel);
+        if (sent_pos != std::string::npos) {
+            clean = clean.substr(0, sent_pos);
+        }
+        
+        // Remove the Command Echo at the start
+        // The shell might echo the command we sent. 
+        // We look for the FIRST newline, assuming the command echo is on the first line.
+        // BUT, strictly speaking, we can just look for the last occurrence of the command string?
+        // No, that's risky.
+        // Better heuristic:
+        // Remote commands are sent as " cmd; echo ...".
+        // The echo might contain that full string.
+        // We also know the *previous* command output ended with a prompt.
+        // Actually, we can just look for the first line that is NOT the command echo?
+        // Let's just strip the first line if it contains "DAIS_END_".
+        // Because the echo OF THE COMMAND contains the sentinel string too (in the echo part)!
+        
+        size_t first_newline = clean.find('\n');
+        if (first_newline != std::string::npos) {
+             std::string first_line = clean.substr(0, first_newline);
+             if (first_line.find("DAIS_END_") != std::string::npos) {
+                 clean = clean.substr(first_newline + 1);
+             }
+        }
+        
+        // Trim whitespace
+        const char* ws = " \t\n\r\x0b\x0c";
+        clean.erase(0, clean.find_first_not_of(ws));
+        clean.erase(clean.find_last_not_of(ws) + 1);
+        
+        // 6. Strip ANSI Escape Codes (Crucial for remote shell hygiene)
+        // Simple state machine to remove \x1b[...] and \x1b(...) sequences
+        std::string final_clean;
+        final_clean.reserve(clean.size());
+        bool in_esc = false;
+        
+        for (size_t i = 0; i < clean.size(); ++i) {
+            char c = clean[i];
+            if (c == '\x1b') {
+                in_esc = true;
+                // Look ahead for [ or (
+                if (i + 1 < clean.size() && (clean[i+1] == '[' || clean[i+1] == '(')) {
+                    i++; // Skip the bracket too, let the loop eat the rest
+                } else {
+                    // Not a CSI sequence we know? just skip ESC
+                    in_esc = false; // Actually, solitary ESC might be valid, but here we assume garbage.
+                }
+                continue;
+            }
+            
+            if (in_esc) {
+                // End of ANSI sequence is usually a letter
+                if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')) {
+                    in_esc = false;
+                }
+                // Continue skipping
+                continue;
+            }
+            
+            final_clean += c;
+        }
+        
+        return final_clean;
+    }
+
+    void Engine::deploy_remote_agent() {
+        if (remote_agent_deployed_) return;
+        
+        // 1. Detect Architecture
+        std::string out = execute_remote_command("uname -m", 5000);
+        
+        if (out.empty()) {
+            // Try uname -a as fallback if -m returned nothing
+            out = execute_remote_command("uname -a", 5000);
+        }
+        if (out.empty()) return;
+
+        if (out.find("x86_64") != std::string::npos) remote_arch_ = "x86_64";
+        else if (out.find("aarch64") != std::string::npos) remote_arch_ = "aarch64";
+        else if (out.find("armv7") != std::string::npos) remote_arch_ = "armv7l";
+        else if (out.find("armv6") != std::string::npos) {
+             remote_arch_ = "armv6";
+        }
+        else {
+             remote_arch_ = "unknown";
+             // Only ERROR for completely unknown architectures (where we can't even try Python safely?)
+             // Actually, Python fallback works for unknown too.
+        }
+
+        if (remote_arch_ == "unknown" && out.empty()) return; // If uname failed completely
+
+        // 2. Get Binary from Bundle
+        auto agent = dais::core::agents::get_agent_for_arch(remote_arch_);
+        // If no agent (e.g. armv6 or mock), we return.
+        // process_user_input will handle the fallback to Python.
+        if (agent.data == nullptr) {
+             return; 
+        }
+
+        // TODO: Implement actual base64 transfer here.
+        // For now, we assume if we detected arch, we are "ready" to attempt fallbacks.
+        remote_agent_deployed_ = true;
+    }
     
     /**
      * @brief Loads command history from ~/.dais_history on startup.
