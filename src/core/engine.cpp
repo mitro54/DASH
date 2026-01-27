@@ -762,7 +762,7 @@ namespace dais::core {
                         continue;
                     }
 
-                    // --- CTRL+C HANDLING ---
+                     // --- CTRL+C HANDLING ---
                     // Clears the current line in the shell, so reset our accumulator and flags too.
                     if (c == '\x03') {
                         cmd_accumulator.clear();
@@ -771,22 +771,105 @@ namespace dais::core {
                         continue;
                     }
 
-                    // --- REMOTE SESSION TRACKING ---
-                    // Actively track input when in remote session to enable command interception
-                    if (!pty_.is_shell_idle() && is_remote_session_) {
-                        if (c == 127 || c == '\b') {
-                            if (!cmd_accumulator.empty()) cmd_accumulator.pop_back();
-                        }
-                        else if (c >= 32 && c < 127) {
-                            cmd_accumulator += c;
-                        }
-                    }
-
                     // --- SMART INTERCEPTION ---
                     // Only process DAIS commands when at shell prompt (IDLE state)
                     
                     // Check for Enter key (\r or \n) indicating command submission
                     if (c == '\r' || c == '\n') {
+                         
+                        // --- REMOTE INTERCEPTION AT ENTER ---
+                        // For remote sessions, we catch commands here (at Enter key) 
+                        // so users can type full arguments before we execute.
+                        if (!pty_.is_shell_idle() && is_remote_session_) {
+                            // Trim leading/trailing whitespace
+                            std::string clean = cmd_accumulator;
+                            if (clean.find_first_not_of(" \t\r\n") != std::string::npos) {
+                                clean.erase(0, clean.find_first_not_of(" \t\r\n"));
+                            }
+                            if (clean.find_last_not_of(" \t\r\n") != std::string::npos) {
+                                clean.erase(clean.find_last_not_of(" \t\r\n") + 1);
+                            }
+
+                            bool intercept = false;
+                            
+                            // Check for DB command
+                            if (clean.starts_with(":db")) {
+                                // Save to history immediately
+                                save_history_entry(clean);
+                                history_index_ = command_history_.size();
+
+                                std::string query = clean.length() > 3 ? clean.substr(4) : "";
+                                
+                                // CLEAR REMOTE LINE: Send Ctrl+U to remote to wipe the "echo"
+                                const char kill_line = kCtrlU; 
+                                write(pty_.get_master_fd(), &kill_line, 1);
+
+                                handle_db_command(query);
+                                intercept = true;
+                            }
+                            // Check for Help command
+                            else if (clean == ":help") {
+                                // Save to history immediately
+                                save_history_entry(clean);
+                                history_index_ = command_history_.size();
+
+                                // CLEAR REMOTE LINE
+                                const char kill_line = kCtrlU; 
+                                write(pty_.get_master_fd(), &kill_line, 1);
+                                
+                                std::cout << "\r\n" << get_help_text() << std::flush;
+                                intercept = true;
+                            }
+                            // Check for LS customization command
+                            else if (clean.starts_with(":ls")) {
+                                // Save to history immediately
+                                save_history_entry(clean);
+                                history_index_ = command_history_.size();
+
+                                std::string args = clean.length() > 3 ? clean.substr(4) : "";
+                                
+                                // CLEAR REMOTE LINE
+                                const char kill_line = kCtrlU; 
+                                write(pty_.get_master_fd(), &kill_line, 1);
+
+                                if (args.empty()) {
+                                    std::string msg = "\r\n[LS Customization]\r\n";
+                                    msg += "Sort By: " + config_.ls_sort_by + "\r\n";
+                                    msg += "Order: " + config_.ls_sort_order + "\r\n";
+                                    msg += "Dirs First: " + std::to_string(config_.ls_dirs_first) + "\r\n";
+                                    msg += "[USAGE] :ls [name|size|type|rows] [asc|desc]\r\n";
+                                    write(STDOUT_FILENO, msg.c_str(), msg.size());
+                                } else {
+                                    std::stringstream ss(args);
+                                    std::string segment;
+                                    while (ss >> segment) {
+                                        if (segment == "d" || segment == "default") {
+                                            config_.ls_sort_by = "type";
+                                            config_.ls_sort_order = "asc";
+                                            config_.ls_dirs_first = true;
+                                        } 
+                                        else if (segment == "size") config_.ls_sort_by = "size";
+                                        else if (segment == "name") config_.ls_sort_by = "name";
+                                        else if (segment == "type") config_.ls_sort_by = "type";
+                                        else if (segment == "rows") config_.ls_sort_by = "rows";
+                                        else if (segment == "asc") config_.ls_sort_order = "asc";
+                                        else if (segment == "desc") config_.ls_sort_order = "desc";
+                                    }
+                                    
+                                    std::string confirm = "\r\nUpdated: Sort=" + config_.ls_sort_by + " Order=" + config_.ls_sort_order + "\r\n";
+                                    write(STDOUT_FILENO, confirm.c_str(), confirm.size());
+                                }
+                                intercept = true;
+                            }
+
+                            if (intercept) {
+                                cmd_accumulator.clear();
+                                // Send newline to get a fresh prompt after our command output
+                                write(pty_.get_master_fd(), "\n", 1);
+                                continue; // Skip sending the actual Enter key to remote
+                            }
+                        }
+
                         // --- SYNC SHELL WITH VISUAL STATE ---
                         // Only sync when user actually navigated history (changes were visual-only).
                         // Skip for internal commands (:) which are handled separately.
@@ -1104,8 +1187,13 @@ namespace dais::core {
 
                         // COMMANDS ALLOWED IN REMOTE SESSIONS
                         if (!pty_.is_shell_idle()) {
-                            // Periodically check if we have entered/exited a remote session
-                            check_remote_session();
+                            // Periodically check if we have entered/exited a remote session.
+                            // THROTTLED: Checking /proc is expensive, don't do it on every keystroke!
+                            auto now = std::chrono::steady_clock::now();
+                            if (std::chrono::duration_cast<std::chrono::milliseconds>(now - last_session_check_).count() > 500) {
+                                check_remote_session();
+                                last_session_check_ = now;
+                            }
                         }
 
                         // COMMANDS ALLOWED IN REMOTE SESSIONS
@@ -1153,61 +1241,6 @@ namespace dais::core {
                                 }
                                 // If not supported (e.g. ls -t), fall through to normal remote execution
                             }
-
-                            if (cmd_accumulator.starts_with(":ls")) {
-                                std::string args = cmd_accumulator.substr(3);
-                                size_t start = args.find_first_not_of(' ');
-                                if (start != std::string::npos) args = args.substr(start);
-                                else args.clear();
-
-                                if (args.empty()) {
-                                    std::string msg = "\r\n[LS Customization]\r\n";
-                                    msg += "Sort By: " + config_.ls_sort_by + "\r\n";
-                                    msg += "Order: " + config_.ls_sort_order + "\r\n";
-                                    msg += "Dirs First: " + std::to_string(config_.ls_dirs_first) + "\r\n";
-                                    msg += "[USAGE] :ls [name|size|type|rows] [asc|desc]\r\n";
-                                    write(STDOUT_FILENO, msg.c_str(), msg.size());
-                                } else {
-                                    // Parse new settings... 
-                                    std::stringstream ss(args);
-                                    std::string segment;
-                                    while (ss >> segment) {
-                                        if (segment == "d" || segment == "default") {
-                                            config_.ls_sort_by = "type";
-                                            config_.ls_sort_order = "asc";
-                                            config_.ls_dirs_first = true;
-                                        } 
-                                        else if (segment == "size") config_.ls_sort_by = "size";
-                                        else if (segment == "name") config_.ls_sort_by = "name";
-                                        else if (segment == "type") config_.ls_sort_by = "type";
-                                        else if (segment == "rows") config_.ls_sort_by = "rows";
-                                        else if (segment == "asc") config_.ls_sort_order = "asc";
-                                        else if (segment == "desc") config_.ls_sort_order = "desc";
-                                    }
-                                    
-                                    std::string confirm = "\r\nUpdated: Sort=" + config_.ls_sort_by + " Order=" + config_.ls_sort_order + "\r\n";
-                                    write(STDOUT_FILENO, confirm.c_str(), confirm.size());
-                                }
-                                
-                                cmd_accumulator.clear();
-                                const char* clear_and_prompt = "\x15\n"; // Ctrl+U + newline
-                                write(pty_.get_master_fd(), clear_and_prompt, 2);
-                                continue;
-                            }
-
-                             // 4. Debug Command (Remote Context)
-                            if (cmd_accumulator == ":debug") {
-                                std::string debug_msg = "\r\n[DAIS Debug - Remote]\r\n";
-                                debug_msg += "Remote Session: " + std::string(is_remote_session_ ? "YES" : "NO") + "\r\n";
-                                debug_msg += "Arch: " + (remote_arch_.empty() ? "N/A" : remote_arch_) + "\r\n";
-                                debug_msg += "Agent: " + std::string(remote_agent_deployed_ ? "YES" : "NO") + "\r\n";
-                                
-                                write(STDOUT_FILENO, debug_msg.c_str(), debug_msg.size());
-                                cmd_accumulator.clear();
-                                const char* clear_and_prompt = "\x15\n"; // Ctrl+U + newline
-                                write(pty_.get_master_fd(), clear_and_prompt, 2);
-                                continue;
-                            }
                         }
 
                         trigger_python_hook("on_command", cmd_accumulator);
@@ -1217,35 +1250,38 @@ namespace dais::core {
                     }
                     // Handle Backspace
                     else if (c == 127 || c == '\b') {
-                        // When editing a history entry or a DAIS command, handle visually
-                        // (shell doesn't know about our visual-only history navigation)
-                        bool visual_mode = (pty_.is_shell_idle() && history_navigated_) ||
-                                           (pty_.is_shell_idle() && cmd_accumulator.starts_with(":"));
+                        // Check if we are in a DAIS command or navigating history
+                        bool starts_with_colon = !cmd_accumulator.empty() && cmd_accumulator[0] == ':';
+                        bool visual_mode = (pty_.is_shell_idle() && (history_navigated_ || starts_with_colon)) || 
+                                           (!pty_.is_shell_idle() && is_remote_session_ && starts_with_colon);
                         
-                        if (visual_mode) {
-                            if (!cmd_accumulator.empty()) {
-                                cmd_accumulator.pop_back();
-                                // Erase character visually: backspace, space, backspace
+                        if (!cmd_accumulator.empty()) {
+                            cmd_accumulator.pop_back();
+                            if (visual_mode) {
                                 std::cout << "\b \b" << std::flush;
+                            } else {
+                                data_to_write += c;
                             }
-                            // Don't send to shell - we're in visual-only mode
-                        } else {
-                            if (!cmd_accumulator.empty()) cmd_accumulator.pop_back();
+                        } else if (!visual_mode) {
+                            // If empty and not in a special DAIS mode, pass through to shell
                             data_to_write += c;
                         }
                     }
                     // Regular character
                     else if (std::isprint(static_cast<unsigned char>(c))) {
-                        // Only accumulate for DAIS history if shell is IDLE (at prompt)
-                        // This prevents app input (e.g. 'n' in nano) from polluting history
-                        if (pty_.is_shell_idle()) {
+                        // Track input if shell is idle OR if we are in a remote session 
+                        // (needed for :db interception in SSH)
+                        bool starts_with_colon = !cmd_accumulator.empty() && cmd_accumulator[0] == ':';
+                        if (pty_.is_shell_idle() || is_remote_session_ || c == ':') {
                             cmd_accumulator += c;
+                            // Update starts_with_colon after adding char
+                            if (cmd_accumulator.size() == 1 && c == ':') starts_with_colon = true;
                         }
                         
                         // Visual-only mode: DAIS commands (:) or editing history entries
                         // Don't send to shell - we'll sync on Enter
-                        bool visual_mode = (pty_.is_shell_idle() && history_navigated_) ||
-                                           (pty_.is_shell_idle() && cmd_accumulator.starts_with(":"));
+                        bool visual_mode = (pty_.is_shell_idle() && (history_navigated_ || starts_with_colon)) || 
+                                           (!pty_.is_shell_idle() && is_remote_session_ && starts_with_colon);
                         
                         if (visual_mode) {
                             std::cout << c << std::flush;
@@ -1574,11 +1610,13 @@ namespace dais::core {
         if (is_remote_session_ && !was) {
              // New session detected - reset deployment state
              remote_agent_deployed_ = false;
+             remote_db_deployed_ = false; // Reset DB handler too
              remote_arch_ = "";
              
              // Trigger auto-deployment immediately if shell is idle
              if (pty_.is_shell_idle()) {
                  deploy_remote_agent();
+                 deploy_remote_db_handler();
              }
         }
     }
@@ -1988,13 +2026,41 @@ namespace dais::core {
         }
 
         try {
-            // 1. Invoke Python Handler
-            // We use the embedded interpreter to import and run the script.
-            py::module_ handler = py::module_::import("db_handler");
+            std::string json_result;
+
+            if (is_remote_session_) {
+                // --- REMOTE EXECUTION ---
+                check_remote_session(); // Sync state
+                deploy_remote_db_handler();
+
+                // Construct remote command
+                // Escaping is tricky. We assume basic quoting.
+                std::string escaped_query = query;
+                // Simple quote escaping
+                size_t pos = 0;
+                while ((pos = escaped_query.find("\"", pos)) != std::string::npos) {
+                    escaped_query.replace(pos, 1, "\\\"");
+                    pos += 2;
+                }
+                
+                
+                
+                
+                std::string remote_cmd = "python3 ~/.dais/bin/db_handler.py \"" + escaped_query + "\"";
+                json_result = execute_remote_command(remote_cmd, 10000); // 10s timeout for DB query
+                
+            } else {
+                // --- LOCAL EXECUTION ---
+                // 1. Invoke Python Handler
+                // We use the embedded interpreter to import and run the script.
+                py::module_ handler = py::module_::import("db_handler");
+                
+                // Pass CWD to Python so it can find local .env and config files
+                std::string cwd_str = shell_cwd_.string();
+                json_result = handler.attr("handle_command")(query, cwd_str).cast<std::string>();
+            }
             
-            // Pass CWD to Python so it can find local .env and config files
-            std::string cwd_str = shell_cwd_.string();
-            std::string json_result = handler.attr("handle_command")(query, cwd_str).cast<std::string>();
+            // 2. Parse Result
             
             // 2. Parse Result
             py::module_ json = py::module_::import("json");
@@ -2005,8 +2071,14 @@ namespace dais::core {
             // --- HANDLING MISSING PACKAGES (Interactive Install) ---
             if (status == "missing_pkg") {
                 std::string pkg = result_obj["package"].cast<std::string>();
+                
+                std::string location = is_remote_session_ ? ("REMOTE: " + pty_.get_foreground_process_name()) : "LOCAL";
+                // Heuristic cleanup of process name if it's just "ssh"
+                if (is_remote_session_) location = "REMOTE"; 
+
                 std::cout << "\r\n[" << handlers::Theme::WARNING << "-" << handlers::Theme::RESET 
-                          << "] Missing package '" << pkg << "'. Install now? (y/N) " << std::flush;
+                          << "] Missing package '" << pkg << "' on " << location << ". Install now"
+                          << (is_remote_session_ ? " (user-scope)" : "") << "? (y/N) " << std::flush;
                 
                 // Read single char response (assuming raw mode)
                 char c = 0;
@@ -2020,7 +2092,15 @@ namespace dais::core {
 
                 if (c == 'y' || c == 'Y') {
                     std::cout << "Y\r\n"; // Echo
-                    std::string cmd = "pip install " + pkg;
+                    std::string cmd;
+                    if (is_remote_session_) {
+                         // Remote Installation (User Scope Safety)
+                         // Warning is already shown by proper UI, but we ensure the command is safe.
+                         cmd = "pip install --user " + pkg;
+                    } else {
+                         // Local Installation
+                         cmd = "pip install " + pkg;
+                    }
                     
                     // Clear the prompt line to make space for pip output
                     const char* clear_line = "\x15"; 
@@ -2073,24 +2153,69 @@ namespace dais::core {
                 
                 // Inject the constructed command into the shell
                 write(pty_.get_master_fd(), cmd.c_str(), cmd.size());
-                
-                // Note: The caller (process_user_input) will send a newline to trigger a fresh prompt.
-                // However, for us to EXECUTE this injected command, we actually need to hit Enter for the user.
-                // But if we do, the caller's subsequent newline might just run an empty command.
-                // Let's rely on the user seeing the typed command and hitting Enter? 
-                // NO, for 'page' action, we usually want it instant.
-                // Let's inject newline here.
-                // write(pty_.get_master_fd(), "\n", 1);
-                // IF we do that, we must ensure the caller doesn't mess it up.
-                // Caller logic: `handle_db_command(query); cmd_accumulator.clear(); write(..., "\n", 1);`
-                // The caller sends newline AFTER we return.
-                // So if we inject the command string here, the caller's newline effectively executes it!
-                // PERFECT.
             }
             
         } catch (const std::exception& e) {
             std::cout << "\r\n[" << handlers::Theme::ERROR << "DB" << handlers::Theme::RESET 
                       << "] Python/Engine Error: " << e.what() << "\r\n" << std::flush;
+        }
+    }
+
+    void Engine::deploy_remote_db_handler() {
+        if (remote_db_deployed_ || !is_remote_session_) return;
+        // Note: For remote sessions, is_shell_idle() is false (SSH is running).        
+        std::string script_content;
+        try {
+            py::module_ inspect = py::module_::import("inspect");
+            py::module_ handler = py::module_::import("db_handler");
+            script_content = inspect.attr("getsource")(handler).cast<std::string>();
+        } catch (const std::exception& e) {
+            return; // Can't deploy if we can't read it
+        }
+
+        // 2. Prepare Remote Paths
+        std::string b64 = base64_encode((const unsigned char*)script_content.data(), script_content.size());
+        
+        std::string temp_b64 = "~/.dais/bin/db_handler.py.b64";
+        std::string target_path = "~/.dais/bin/db_handler.py";
+
+        // 3. Inject (Silent Streaming)
+        // Prevent history pollution by disabling history for this block
+        // Also suppress PS2 to prevent '> >' echo artifacts during heredoc
+        execute_remote_command("export DAIS_OLD_PS2=\"$PS2\"; export PS2=''; set +o history", 2000); 
+        execute_remote_command("mkdir -p ~/.dais/bin", 2000);
+        execute_remote_command("rm -f " + temp_b64, 2000);
+        execute_remote_command("stty -echo", 2000);
+
+        std::string start_heredoc = "cat > " + temp_b64 + " << 'DAIS_EOF'\n";
+        write(pty_.get_master_fd(), start_heredoc.c_str(), start_heredoc.size());
+
+        constexpr size_t PAYLOAD_CHUNK = 4096;
+        size_t sent = 0;
+        while (sent < b64.size()) {
+            size_t n = std::min(PAYLOAD_CHUNK, b64.size() - sent);
+            write(pty_.get_master_fd(), b64.data() + sent, n);
+            sent += n;
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+
+        std::string end_heredoc = "\nDAIS_EOF\n";
+        write(pty_.get_master_fd(), end_heredoc.c_str(), end_heredoc.size());
+        std::this_thread::sleep_for(std::chrono::milliseconds(300));
+
+        execute_remote_command("stty echo", 2000);
+
+        // 4. Decode
+        std::string deploy_cmd = 
+            "base64 -d " + temp_b64 + " > " + target_path + " && "
+            "rm " + temp_b64 + " && "
+            "export PS2=\"$DAIS_OLD_PS2\"; unset DAIS_OLD_PS2; set -o history && " // Re-enable history & prompts
+            "echo DAIS_DEPLOY_OK";
+
+        std::string result = execute_remote_command(deploy_cmd, 5000);
+        
+        if (result.find("DAIS_DEPLOY_OK") != std::string::npos) {
+            remote_db_deployed_ = true;
         }
     }
 }

@@ -98,7 +98,7 @@ class SqliteAdapter(DBAdapter):
         self.cursor = None
 
     def connect(self, source, **kwargs):
-        self.conn = sqlite3.connect(source)
+        self.conn = sqlite3.connect(source, isolation_level=None)
         self.cursor = self.conn.cursor()
 
     def execute(self, query):
@@ -509,7 +509,17 @@ def handle_command(cmd_input, cwd):
 
         # Set defaults if still missing
         db_type = resolved_config.get("DB_TYPE", "sqlite")
-        db_source = resolved_config.get("DB_SOURCE", ":memory:")
+        
+        # Priority for default SQlite source:
+        # 1. ~/.dais/dais.db (Created if missing)
+        # 2. current directory .dais.db
+        # 3. :memory: (absolute fallback)
+        default_source = os.path.expanduser("~/.dais/dais.db")
+        if not os.path.exists(os.path.dirname(default_source)):
+            try: os.makedirs(os.path.dirname(default_source), exist_ok=True)
+            except: default_source = ".dais.db"
+            
+        db_source = resolved_config.get("DB_SOURCE", default_source)
         
         # Extra args for adapters (host/user/pass)
         adapter_kwargs = {}
@@ -528,3 +538,15 @@ def handle_command(cmd_input, cwd):
 
     except Exception as e:
          return json.dumps({"status": "error", "message": f"Unexpected Handler Error: {str(e)}"})
+
+# =============================================================================
+# CLI ENTRY POINT (For SSH usage)
+# =============================================================================
+if __name__ == "__main__":
+    if len(sys.argv) < 2:
+        print(json.dumps({"status": "error", "message": "Usage: python3 db_handler.py <query>"}))
+        sys.exit(1)
+        
+    query = sys.argv[1]
+    cwd = os.getcwd() # In SSH, we run in the user's directory directly
+    print(handle_command(query, cwd))

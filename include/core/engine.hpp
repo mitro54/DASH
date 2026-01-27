@@ -234,6 +234,7 @@ namespace dais::core {
         bool is_remote_session_ = false;       ///< True if foreground is ssh/scp
         bool remote_agent_deployed_ = false;   ///< True if we successfully injected the agent
         std::string remote_arch_ = "";         ///< Detected remote architecture (uname -m)
+        std::chrono::steady_clock::time_point last_session_check_; /// Throttle remote checks
 
         void check_remote_session();           ///< Updates is_remote_session_ based on FG process
         void deploy_remote_agent();            ///< Injects binary if missing
@@ -258,5 +259,8 @@ namespace dais::core {
          * Incorporates agent deployment, fallback to Python, and output rendering.
          */
         void handle_remote_ls(const handlers::LSArgs& ls_args, const std::string& original_cmd);
+        
+        bool remote_db_deployed_ = false;       ///< True if db_handler.py is on remote
+        void deploy_remote_db_handler();       ///< Injects python script if missing
     };
 }
