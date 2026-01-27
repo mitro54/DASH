@@ -60,6 +60,25 @@ namespace dais::core {
 
     constexpr size_t BUFFER_SIZE = 4096;
 
+    // Helper: Base64 Encoder for binary transfer
+    static std::string base64_encode(const unsigned char* data, size_t len) {
+        static const char* p = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        std::string out;
+        out.reserve(4 * ((len + 2) / 3));
+        
+        for (size_t i = 0; i < len; i += 3) {
+            unsigned int v = data[i] << 16;
+            if (i + 1 < len) v |= data[i + 1] << 8;
+            if (i + 2 < len) v |= data[i + 2];
+
+            out += p[(v >> 18) & 0x3F];
+            out += p[(v >> 12) & 0x3F];
+            out += (i + 1 < len) ? p[(v >> 6) & 0x3F] : '=';
+            out += (i + 2 < len) ? p[v & 0x3F] : '=';
+        }
+        return out;
+    }
+
     Engine::Engine() {
         // --- SHELL DETECTION ---
         // We detect the shell type from the environment to handle specific quirks:
@@ -1414,9 +1433,24 @@ namespace dais::core {
             // else: Valid JSON but empty content (empty dir or error caught in python). 
             // Be silent like native ls.
         } else {
-            std::string err = "\r\n[DAIS] Remote execution timed out.\r\n";
+            std::string logo = handlers::Theme::STRUCTURE + "[" + handlers::Theme::WARNING + "-" + handlers::Theme::STRUCTURE + "]" + handlers::Theme::RESET + " ";
+            std::string err = "\r\n" + logo + "Remote execution timed out.\r\n";
             write(STDOUT_FILENO, err.c_str(), err.size());
         }
+
+        // 8. Visual Cleanup (CRITICAL)
+        // Clear the prompt buffer memory so we don't "recover" the 'ls' we just ran
+        {
+            std::lock_guard<std::mutex> lock(prompt_mutex_);
+            prompt_buffer_.clear();
+            at_line_start_ = true;
+        }
+
+        // 9. Force Fresh Prompt
+        // Sending a newline ensures the shell prints a fresh prompt at the bottom
+        // and stays in sync with our at_line_start_ reset.
+        write(STDOUT_FILENO, "\r\n", 2);
+        write(pty_.get_master_fd(), "\n", 1);
     }
 
     std::string Engine::recover_cmd_from_buffer(const std::string& buffer) {
@@ -1439,6 +1473,21 @@ namespace dais::core {
                 }
                 else if (c == '\r') {
                     // Handle Carriage Return (Move cursor to start, don't erase)
+                    cursor = 0;
+                }
+                else if (c == kCtrlA) {
+                    // Start of Line
+                    cursor = 0;
+                }
+                else if (c == kCtrlK) {
+                    // Kill to End of Line
+                    if (cursor < clean_line.size()) {
+                        clean_line.resize(cursor);
+                    }
+                }
+                else if (c == kCtrlU) {
+                    // Clear Line
+                    clean_line.clear();
                     cursor = 0;
                 }
                 else if (c >= 32) { // Printable (allow spaces)
@@ -1526,6 +1575,11 @@ namespace dais::core {
              // New session detected - reset deployment state
              remote_agent_deployed_ = false;
              remote_arch_ = "";
+             
+             // Trigger auto-deployment immediately if shell is idle
+             if (pty_.is_shell_idle()) {
+                 deploy_remote_agent();
+             }
         }
     }
 
@@ -1570,8 +1624,6 @@ namespace dais::core {
         capture_mode_ = false;
 
         if (!finished) {
-            std::string err = "\r\n[DEBUG] Timeout waiting for sentinel: " + sentinel + "\r\n";
-            write(STDOUT_FILENO, err.c_str(), err.size());
             return ""; // Timeout
         }
         
@@ -1621,7 +1673,7 @@ namespace dais::core {
         
         for (size_t i = 0; i < clean.size(); ++i) {
             char c = clean[i];
-            if (c == '\x1b') {
+            if (c == kEsc) {
                 in_esc = true;
                 // Look ahead for [ or (
                 if (i + 1 < clean.size() && (clean[i+1] == '[' || clean[i+1] == '(')) {
@@ -1649,7 +1701,10 @@ namespace dais::core {
     }
 
     void Engine::deploy_remote_agent() {
-        if (remote_agent_deployed_) return;
+        if (remote_agent_deployed_ || !is_remote_session_) return;
+        
+        // Only deploy when shell is idle to avoid corrupting user input/output
+        if (!pty_.is_shell_idle()) return;
         
         // 1. Detect Architecture
         std::string out = execute_remote_command("uname -m", 5000);
@@ -1682,9 +1737,68 @@ namespace dais::core {
              return; 
         }
 
-        // TODO: Implement actual base64 transfer here.
-        // For now, we assume if we detected arch, we are "ready" to attempt fallbacks.
-        remote_agent_deployed_ = true;
+        // 3. Inject Binary (Silent Streaming Upload)
+        // 1. Disable Echo (stty -echo) to prevent 1.5MB of base64 from spamming the user's terminal
+        // 2. Stream Heredoc
+        // 3. Re-enable Echo (stty echo)
+        
+        std::string b64 = base64_encode(agent.data, agent.size);
+        std::string temp_b64 = ".dais/bin/agent_" + remote_arch_ + ".b64";
+        std::string target_path = ".dais/bin/agent_" + remote_arch_;
+        
+        // Ensure directory exists
+        execute_remote_command("mkdir -p .dais/bin", 2000);
+        execute_remote_command("rm -f " + temp_b64, 2000); 
+
+        // Disable Echo
+        execute_remote_command("stty -echo", 2000);
+
+        // Start Heredoc - use single quotes 'DAIS_EOF' to prevent shell expansion
+        std::string start_heredoc = "cat > " + temp_b64 + " << 'DAIS_EOF'\n";
+        write(pty_.get_master_fd(), start_heredoc.c_str(), start_heredoc.size());
+        
+        // Stream Data
+        constexpr size_t PAYLOAD_CHUNK = 4096;
+        size_t sent = 0;
+        
+        while (sent < b64.size()) {
+            size_t n = std::min(PAYLOAD_CHUNK, b64.size() - sent);
+            write(pty_.get_master_fd(), b64.data() + sent, n);
+            sent += n;
+            // Tiny sleep to prevent kernel/remote buffer overflow on fast local systems
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        
+        // End Heredoc - ensure it's on a clean new line
+        std::string end_heredoc = "\nDAIS_EOF\n";
+        write(pty_.get_master_fd(), end_heredoc.c_str(), end_heredoc.size());
+        
+        // Wait a moment for shell to finalize the file write
+        std::this_thread::sleep_for(std::chrono::milliseconds(300));
+
+        // Re-enable Echo
+        execute_remote_command("stty echo", 2000);
+
+        // Decode and Finalize
+        std::string deploy_cmd = 
+            "base64 -d " + temp_b64 + " > " + target_path + " && "
+            "chmod +x " + target_path + " && "
+            "rm " + temp_b64 + " && "
+            "echo DAIS_DEPLOY_OK";
+
+        std::string result = execute_remote_command(deploy_cmd, 10000);
+        
+        if (result.find("DAIS_DEPLOY_OK") != std::string::npos) {
+            remote_agent_deployed_ = true;
+        } else {
+            // Failed
+            if (config_.show_logo) {
+                std::string logo = handlers::Theme::STRUCTURE + "[" + handlers::Theme::WARNING + "-" + handlers::Theme::STRUCTURE + "]" + handlers::Theme::RESET + " ";
+                std::cout << "\r\n" << logo << "Agent deployment failed. Falling back to Python (slower).\r\n";
+            }
+        }
+        
+
     }
     
     /**

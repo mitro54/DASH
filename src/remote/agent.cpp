@@ -44,9 +44,8 @@ std::string escape_json(std::string_view s) {
 }
 
 int main(int argc, char* argv[]) {
-    // 1. Output Sentinel (Heartbeat) - confirms agent is running
-    std::cout << "\x07DAIS_READY\x07"; 
-
+    // Pure JSON mode
+     
     std::vector<std::string> paths;
     bool show_hidden = false;
 
@@ -120,6 +119,6 @@ int main(int argc, char* argv[]) {
     }
 
     std::cout << "]"; // End JSON array
-    std::cout << "\x07DAIS_END\x07"; // End Sentinel
+    std::cout << "\n"; // Clean line termination
     return 0;
 }
