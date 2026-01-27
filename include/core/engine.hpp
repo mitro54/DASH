@@ -215,6 +215,7 @@ namespace dais::core {
         bool history_navigated_ = false;            ///< True if arrow navigation was used
         bool tab_used_ = false;                      ///< True if Tab was used (accumulator unreliable)
         bool skipping_osc_ = false;                 ///< True if we are in the middle of skipping an OSC sequence
+        std::atomic<bool> in_more_pager_{false};    ///< True when "--More--" is detected (for arrow key translation)
         static constexpr size_t MAX_HISTORY = 1000; ///< Max stored commands (like bash)
         
         void load_history();                        ///< Load from file on startup
@@ -262,5 +263,17 @@ namespace dais::core {
         
         bool remote_db_deployed_ = false;       ///< True if db_handler.py is on remote
         void deploy_remote_db_handler();       ///< Injects python script if missing
+        
+        // =====================================================================
+        // LESS PAGER AVAILABILITY (For Remote Sessions)
+        // =====================================================================
+        bool less_checked_ = false;             ///< True if we've checked for less
+        bool less_available_ = true;            ///< True if less is available (default optimistic)
+        
+        /**
+         * @brief Checks if 'less' is available on remote and offers to install if not.
+         * @return True if less is available (or was installed), false to use cat fallback.
+         */
+        bool check_and_offer_less_install();
     };
 }

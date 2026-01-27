@@ -19,6 +19,7 @@
 #include <string>
 #include <iostream> // Needed for std::cout, std::cerr
 #include <fstream>  // Needed for std::ofstream, std::ifstream
+#include <limits>   // Needed for std::numeric_limits
 #include <poll.h>
 #include <csignal>
 #include <sys/wait.h>
@@ -576,6 +577,7 @@ namespace dais::core {
                     
                     if (c == '\n') {
                         at_line_start_ = true;
+                        in_more_pager_ = false;  // Pager exits on newline (user scrolled)
                         std::lock_guard<std::mutex> lock(prompt_mutex_);
                         prompt_buffer_.clear();
                     } else if (c == '\r') {
@@ -593,6 +595,13 @@ namespace dais::core {
                         prompt_buffer_ += c;
                         if (prompt_buffer_.size() > 1024) {
                             prompt_buffer_ = prompt_buffer_.substr(prompt_buffer_.size() - 1024);
+                        }
+                        
+                        // PAGER DETECTION: Set flag when "--More--" appears in buffer
+                        // This is more reliable than checking in process_user_input
+                        // because it's set synchronously as output is processed.
+                        if (prompt_buffer_.find("--More--") != std::string::npos) {
+                            in_more_pager_ = true;
                         }
                     }
                 }
@@ -666,12 +675,26 @@ namespace dais::core {
                         // Check for arrow key interception with debounce
                         if (i + 2 < n && (buffer[i + 1] == '[' || buffer[i + 1] == 'O')) {
                             char arrow = buffer[i + 2];
+                            // PAGER TRANSLATION FIX (HIGHEST PRIORITY):
+                            // Check if we're in the "more" pager FIRST before any other arrow handling.
+                            // Uses in_more_pager_ flag which is set synchronously in forward_shell_output.
+                            if ((arrow == 'A' || arrow == 'B') && in_more_pager_) {
+                                if (arrow == 'B') { // Down Arrow -> Enter (Scroll)
+                                    write(pty_.get_master_fd(), "\n", 1);
+                                } 
+                                // If Up Arrow (A): Do nothing (Swallow to prevent artifacts)
+                                
+                                i += 2; // Skip sequence
+                                continue; // Don't forward original escape sequence
+                            }
                             
                             // DEBOUNCE: Wait 200ms after last command to avoid race with app startup
                             auto now = std::chrono::steady_clock::now();
                             auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
                                 now - last_command_time_).count();
                             
+                            // Intercept arrows for DAIS history navigation ONLY for local sessions
+                            // Remote sessions use the shell's own history (forwarded arrows)
                             if ((arrow == 'A' || arrow == 'B') && 
                                 pty_.is_shell_idle() && 
                                 elapsed > 200) {
@@ -680,6 +703,24 @@ namespace dais::core {
                                 navigate_history(direction, cmd_accumulator);
                                 i += 2;  // Skip '['/O' and arrow letter
                                 continue;  // Don't forward to shell
+                            }
+                            
+                            // --- LEFT/RIGHT ARROW SYNC ---
+                            // If user presses Left (D) or Right (C) after history navigation,
+                            // sync history content to shell first so cursor movement works.
+                            if ((arrow == 'C' || arrow == 'D') && 
+                                history_navigated_ && pty_.is_shell_idle() && 
+                                !cmd_accumulator.empty() && !cmd_accumulator.starts_with(":")) {
+                                // Move cursor left by command length, then clear to end (preserves prompt)
+                                std::cout << "\x1b[" << cmd_accumulator.size() << "D\x1b[K" << std::flush;
+                                
+                                // Sync shell: clear line and send accumulated content
+                                const char kill_line = kCtrlU;
+                                write(pty_.get_master_fd(), &kill_line, 1);
+                                write(pty_.get_master_fd(), cmd_accumulator.c_str(), cmd_accumulator.size());
+                                
+                                // Reset flag - now shell has content and arrow will work
+                                history_navigated_ = false;
                             }
                         }
                         
@@ -780,9 +821,32 @@ namespace dais::core {
                         // --- REMOTE INTERCEPTION AT ENTER ---
                         // For remote sessions, we catch commands here (at Enter key) 
                         // so users can type full arguments before we execute.
+                        // SYNC FIX: Always check remote session state before interception
+                        // to ensure is_remote_session_ is current (fixes history recall issues).
+                        check_remote_session();
+                        
                         if (!pty_.is_shell_idle() && is_remote_session_) {
-                            // Trim leading/trailing whitespace
+                            // RECOVERY: If cmd_accumulator is empty or contains tab noise,
+                            // we try to recover the actual visual line from prompt_buffer_.
+                            // This is critical for history navigation (Up-Arrow), where
+                            // characters come from the shell, not the keyboard.
+                            std::string recovered;
+                            {
+                                std::lock_guard<std::mutex> lock(prompt_mutex_);
+                                recovered = recover_cmd_from_buffer(prompt_buffer_);
+                            }
+                            
+                            // Use recovered if available and:
+                            // - cmd_accumulator is empty
+                            // - cmd_accumulator contains tab noise
+                            // - tab was used (shell has the expanded path, we don't)
+                            // NOTE: Don't use is_remote_session_ here - prompt_buffer can be stale
                             std::string clean = cmd_accumulator;
+                            if (clean.empty() || clean.find('\t') != std::string::npos || tab_used_) {
+                                if (!recovered.empty()) clean = recovered;
+                            }
+
+                            // Trim leading/trailing whitespace
                             if (clean.find_first_not_of(" \t\r\n") != std::string::npos) {
                                 clean.erase(0, clean.find_first_not_of(" \t\r\n"));
                             }
@@ -794,9 +858,12 @@ namespace dais::core {
                             
                             // Check for DB command
                             if (clean.starts_with(":db")) {
-                                // Save to history immediately
-                                save_history_entry(clean);
-                                history_index_ = command_history_.size();
+                                // Save to local history ONLY if local session
+                                // For remote sessions, we inject into remote shell history instead
+                                if (!is_remote_session_) {
+                                    save_history_entry(clean);
+                                    history_index_ = command_history_.size();
+                                }
 
                                 std::string query = clean.length() > 3 ? clean.substr(4) : "";
                                 
@@ -804,12 +871,29 @@ namespace dais::core {
                                 const char kill_line = kCtrlU; 
                                 write(pty_.get_master_fd(), &kill_line, 1);
 
+                                // Inject into remote history so it's 'up-arrowable'
+                                // REORDER FIX: We MUST inject history before running the command.
+                                // Why? execute_remote_command() enables capture_mode_ (swallows output).
+                                // If we run handle_db_command() first, it starts the 'less' process which streams output.
+                                // Then execute_remote_command() runs and effectively mutes that output.
+                                if (is_remote_session_) {
+                                    std::string escaped = clean;
+                                    size_t p = 0;
+                                    while ((p = escaped.find("\"", p)) != std::string::npos) {
+                                        escaped.replace(p, 1, "\\\"");
+                                        p += 2;
+                                    }
+                                    std::string inject = "{ history -s \"" + escaped + "\" 2>/dev/null || print -s \"" + escaped + "\" 2>/dev/null; }";
+                                    execute_remote_command(inject, 2000);
+                                }
+
                                 handle_db_command(query);
+
                                 intercept = true;
                             }
                             // Check for Help command
                             else if (clean == ":help") {
-                                // Save to history immediately
+                                // Save to local history immediately
                                 save_history_entry(clean);
                                 history_index_ = command_history_.size();
 
@@ -818,11 +902,22 @@ namespace dais::core {
                                 write(pty_.get_master_fd(), &kill_line, 1);
                                 
                                 std::cout << "\r\n" << get_help_text() << std::flush;
+
+                                // Inject into remote history
+                                std::string escaped = clean;
+                                size_t p = 0;
+                                while ((p = escaped.find("\"", p)) != std::string::npos) {
+                                    escaped.replace(p, 1, "\\\"");
+                                    p += 2;
+                                }
+                                std::string inject = "{ history -s \"" + escaped + "\" 2>/dev/null || print -s \"" + escaped + "\" 2>/dev/null; }";
+                                execute_remote_command(inject, 2000);
+
                                 intercept = true;
                             }
                             // Check for LS customization command
                             else if (clean.starts_with(":ls")) {
-                                // Save to history immediately
+                                // Save to local history immediately
                                 save_history_entry(clean);
                                 history_index_ = command_history_.size();
 
@@ -859,13 +954,38 @@ namespace dais::core {
                                     std::string confirm = "\r\nUpdated: Sort=" + config_.ls_sort_by + " Order=" + config_.ls_sort_order + "\r\n";
                                     write(STDOUT_FILENO, confirm.c_str(), confirm.size());
                                 }
+
+                                // Inject into remote history
+                                std::string escaped = clean;
+                                size_t p = 0;
+                                while ((p = escaped.find("\"", p)) != std::string::npos) {
+                                    escaped.replace(p, 1, "\\\"");
+                                    p += 2;
+                                }
+                                std::string inject = "{ history -s \"" + escaped + "\" 2>/dev/null || print -s \"" + escaped + "\" 2>/dev/null; }";
+                                execute_remote_command(inject, 2000);
+
                                 intercept = true;
+                            }
+                            // Check for standard ls (intercept and use agent)
+                            else if (clean == "ls" || clean.starts_with("ls ")) {
+                                auto ls_args = handlers::parse_ls_args(clean);
+                                if (ls_args.supported) {
+                                    handle_remote_ls(ls_args, clean);
+                                    intercept = true;
+                                }
+                                // If not supported (e.g. ls -t), fall through to normal remote execution
                             }
 
                             if (intercept) {
                                 cmd_accumulator.clear();
-                                // Send newline to get a fresh prompt after our command output
-                                write(pty_.get_master_fd(), "\n", 1);
+                                {
+                                    std::lock_guard<std::mutex> lock(prompt_mutex_);
+                                    // Don't clear prompt_buffer_ here - it prevents recovery of next command
+                                    // prompt_buffer_.clear(); 
+                                }
+                                // NOTE: Don't send extra newline here - the injected command already has one
+                                // Sending another causes double prompts
                                 continue; // Skip sending the actual Enter key to remote
                             }
                         }
@@ -875,14 +995,10 @@ namespace dais::core {
                         // Skip for internal commands (:) which are handled separately.
                         if (history_navigated_ && pty_.is_shell_idle() && !cmd_accumulator.empty() && 
                             !cmd_accumulator.starts_with(":")) {
-                            // First, erase the visual display (we echoed it during navigation)
-                            // This prevents double echo since shell will echo the command itself
-                            for (size_t i = 0; i < cmd_accumulator.size(); ++i) {
-                                std::cout << "\b \b";
-                            }
-                            std::cout << std::flush;
+                            // Move cursor left by command length, then clear to end (preserves prompt)
+                            std::cout << "\x1b[" << cmd_accumulator.size() << "D\x1b[K" << std::flush;
                             
-                            // Now sync: clear shell's empty line and send command
+                            // Sync: clear shell's empty line and send command
                             const char kill_line = kCtrlU;  // Ctrl+U
                             write(pty_.get_master_fd(), &kill_line, 1);
                             write(pty_.get_master_fd(), cmd_accumulator.c_str(), cmd_accumulator.size());
@@ -1185,10 +1301,8 @@ namespace dais::core {
                             }
                         }
 
-                        // COMMANDS ALLOWED IN REMOTE SESSIONS
+                        // --- THROTTLED SESSION CHECK ---
                         if (!pty_.is_shell_idle()) {
-                            // Periodically check if we have entered/exited a remote session.
-                            // THROTTLED: Checking /proc is expensive, don't do it on every keystroke!
                             auto now = std::chrono::steady_clock::now();
                             if (std::chrono::duration_cast<std::chrono::milliseconds>(now - last_session_check_).count() > 500) {
                                 check_remote_session();
@@ -1196,7 +1310,7 @@ namespace dais::core {
                             }
                         }
 
-                        // COMMANDS ALLOWED IN REMOTE SESSIONS
+                        // COMMANDS ALWAYS INTERCEPTED (Typed or History)
                         if (!pty_.is_shell_idle() && is_remote_session_) {
                             // 2. Internal Exit Commands (Remote Context)
                             // Allows cleanly exiting DAIS even if trapped in SSH
@@ -1205,41 +1319,6 @@ namespace dais::core {
                                 running_ = false;
                                 kill(pty_.get_child_pid(), SIGHUP); 
                                 return;
-                            }
-
-                            // 3. LS Sort Configuration Commands (Remote Context)
-                            // We also check for PURE 'ls' commands here to intercept them!
-                            
-                            // RECOVERY LOGIC (Tab Completion AND History Navigation):
-                            // 1. Tab Completion: cmd_accumulator is partial/invalid.
-                            // 2. History (Up Arrow): cmd_accumulator is EMPTY (we didn't type the chars).
-                            // In both cases, the Shell's visual echo is the source of truth.
-                            bool try_recovery = tab_used_ || cmd_accumulator.empty();
-                            
-                            if (try_recovery) {
-                                std::lock_guard<std::mutex> lock(prompt_mutex_);
-                                
-                                // Use helper to simulate terminal state and recover the visual command line
-                                std::string recovered = recover_cmd_from_buffer(prompt_buffer_);
-                                
-                                if (!recovered.empty()) {
-                                    cmd_accumulator = recovered;
-                                }
-                            }
-
-                            // Check for standard ls (intercept and use agent)
-                            if (cmd_accumulator == "ls" || cmd_accumulator.starts_with("ls ")) {
-                                // Parse args to see if we support it (mostly for -a)
-                                auto ls_args = handlers::parse_ls_args(cmd_accumulator);
-
-                                if (ls_args.supported) {
-                                    handle_remote_ls(ls_args, cmd_accumulator);
-                                    
-                                    cmd_accumulator.clear();
-                                    tab_used_ = false;
-                                    continue;
-                                }
-                                // If not supported (e.g. ls -t), fall through to normal remote execution
                             }
                         }
 
@@ -1250,9 +1329,37 @@ namespace dais::core {
                     }
                     // Handle Backspace
                     else if (c == 127 || c == '\b') {
-                        // Check if we are in a DAIS command or navigating history
+                        // ADOPTION: If cmd_accumulator is empty, we might be editing a command 
+                        // pulled from the shell's native history (Up-Arrow). 
+                        // We try to recover it so we can keep edits within DAIS.
+                        if (cmd_accumulator.empty()) {
+                            std::lock_guard<std::mutex> lock(prompt_mutex_);
+                            std::string recovered = recover_cmd_from_buffer(prompt_buffer_);
+                            if (recovered.starts_with(":")) {
+                                cmd_accumulator = recovered;
+                            }
+                        }
+
+                        // --- HISTORY EDITING SYNC (same as printable chars) ---
+                        // If user starts editing after history navigation (local shell),
+                        // sync the history content to shell first, then allow normal editing.
+                        if (history_navigated_ && pty_.is_shell_idle() && !cmd_accumulator.empty() &&
+                            !cmd_accumulator.starts_with(":")) {
+                            // Move cursor left by command length, then clear to end (preserves prompt)
+                            std::cout << "\x1b[" << cmd_accumulator.size() << "D\x1b[K" << std::flush;
+                            
+                            // Sync shell: clear line and send accumulated content
+                            const char kill_line = kCtrlU;
+                            write(pty_.get_master_fd(), &kill_line, 1);
+                            write(pty_.get_master_fd(), cmd_accumulator.c_str(), cmd_accumulator.size());
+                            
+                            // Reset flag - subsequent edits go directly to shell
+                            history_navigated_ = false;
+                        }
+
+                        // Check if we are in a DAIS command (: commands stay visual)
                         bool starts_with_colon = !cmd_accumulator.empty() && cmd_accumulator[0] == ':';
-                        bool visual_mode = (pty_.is_shell_idle() && (history_navigated_ || starts_with_colon)) || 
+                        bool visual_mode = (pty_.is_shell_idle() && starts_with_colon) || 
                                            (!pty_.is_shell_idle() && is_remote_session_ && starts_with_colon);
                         
                         if (!cmd_accumulator.empty()) {
@@ -1269,6 +1376,35 @@ namespace dais::core {
                     }
                     // Regular character
                     else if (std::isprint(static_cast<unsigned char>(c))) {
+                        // ADOPTION: Same as backspace, we try to adopt history commands
+                        // before the first new character "leaks" to the shell.
+                        if (cmd_accumulator.empty()) {
+                            std::lock_guard<std::mutex> lock(prompt_mutex_);
+                            std::string recovered = recover_cmd_from_buffer(prompt_buffer_);
+                            if (recovered.starts_with(":")) {
+                                cmd_accumulator = recovered;
+                            }
+                        }
+
+                        // --- HISTORY EDITING SYNC ---
+                        // If user starts typing after history navigation (local shell),
+                        // sync the history content to shell first, then allow normal typing.
+                        // This enables editing history commands instead of being stuck in visual mode.
+                        if (history_navigated_ && pty_.is_shell_idle() && !cmd_accumulator.empty() &&
+                            !cmd_accumulator.starts_with(":")) {
+                            // Move cursor left by command length, then clear to end (preserves prompt)
+                            std::cout << "\x1b[" << cmd_accumulator.size() << "D\x1b[K" << std::flush;
+                            
+                            // Sync shell: clear line and send accumulated content
+                            // Shell will redraw after Ctrl-U
+                            const char kill_line = kCtrlU;
+                            write(pty_.get_master_fd(), &kill_line, 1);
+                            write(pty_.get_master_fd(), cmd_accumulator.c_str(), cmd_accumulator.size());
+                            
+                            // Reset flag - subsequent chars go directly to shell
+                            history_navigated_ = false;
+                        }
+
                         // Track input if shell is idle OR if we are in a remote session 
                         // (needed for :db interception in SSH)
                         bool starts_with_colon = !cmd_accumulator.empty() && cmd_accumulator[0] == ':';
@@ -1278,9 +1414,9 @@ namespace dais::core {
                             if (cmd_accumulator.size() == 1 && c == ':') starts_with_colon = true;
                         }
                         
-                        // Visual-only mode: DAIS commands (:) or editing history entries
-                        // Don't send to shell - we'll sync on Enter
-                        bool visual_mode = (pty_.is_shell_idle() && (history_navigated_ || starts_with_colon)) || 
+                        // Visual-only mode: DAIS commands (:) only
+                        // History editing now syncs shell above, so we only stay visual for : commands
+                        bool visual_mode = (pty_.is_shell_idle() && starts_with_colon) || 
                                            (!pty_.is_shell_idle() && is_remote_session_ && starts_with_colon);
                         
                         if (visual_mode) {
@@ -1478,14 +1614,13 @@ namespace dais::core {
         // Clear the prompt buffer memory so we don't "recover" the 'ls' we just ran
         {
             std::lock_guard<std::mutex> lock(prompt_mutex_);
-            prompt_buffer_.clear();
+            // prompt_buffer_.clear(); // Don't wipe buffer explicitly
             at_line_start_ = true;
         }
 
         // 9. Force Fresh Prompt
-        // Sending a newline ensures the shell prints a fresh prompt at the bottom
-        // and stays in sync with our at_line_start_ reset.
-        write(STDOUT_FILENO, "\r\n", 2);
+        // Sending a newline to PTY ensures the shell prints a fresh prompt
+        // Don't write to local STDOUT - that causes extra blank lines
         write(pty_.get_master_fd(), "\n", 1);
     }
 
@@ -1551,7 +1686,43 @@ namespace dais::core {
                                 clean_line.resize(cursor);
                             }
                         }
+                        // 1: Clear from start to cursor
+                        else if (csi_seq == "1") {
+                             if (cursor < clean_line.size()) {
+                                 // Replace 0..cursor with spaces
+                                 for (size_t k = 0; k <= cursor; ++k) clean_line[k] = ' ';
+                             }
+                        }
+                        // 2: Clear entire line
+                        else if (csi_seq == "2") {
+                            // If cursor > 0, we must preserve 'cursor' position by padding with spaces if we clear?
+                            clean_line.clear();
+                            if (cursor > 0) clean_line.resize(cursor, ' ');
+                        }
                     }
+                    else if (c == 'A') {
+                        // Cursor Up - ignore for single line simulation? 
+                        // Or treating as simple buffer, maybe no-op since we only care about current line content?
+                    }
+                    else if (c == 'B') {
+                        // Cursor Down - ignore
+                    }
+                    else if (c == 'C') {
+                        // Cursor Forward (Right)
+                        int n = (csi_seq.empty()) ? 1 : std::stoi(csi_seq);
+                        cursor += n;
+                        // Pad with spaces if moved beyond current length
+                        if (cursor > clean_line.size()) {
+                            clean_line.resize(cursor, ' ');
+                        }
+                    }
+                    else if (c == 'D') {
+                        // Cursor Back (Left)
+                        int n = (csi_seq.empty()) ? 1 : std::stoi(csi_seq);
+                        if (cursor >= n) cursor -= n;
+                        else cursor = 0;
+                    }
+
                     state = TEXT; 
                 } else {
                     csi_seq += c;
@@ -1592,6 +1763,16 @@ namespace dais::core {
             if (recovered.find_last_not_of(ws) != std::string::npos)
                 recovered.erase(recovered.find_last_not_of(ws) + 1);
             
+            // DEEP CLEAN: Strip any remaining non-printable chars (e.g. malformed ANSI leftovers)
+            // This is critical for SSH history where syntax highlighting might leak through
+            std::string deep_clean;
+            for (char c : recovered) {
+                if (std::isprint(static_cast<unsigned char>(c))) {
+                    deep_clean += c;
+                }
+            }
+            if (!deep_clean.empty()) recovered = deep_clean;
+
             return recovered;
         }
 
@@ -2140,19 +2321,45 @@ namespace dais::core {
                 
             } else if (action == "page") {
                 // ACTION: Open in Pager (less)
-                std::string pager_cmd = "less -S"; // Default fallback
+                std::string pager_cmd = "less -S"; 
                 if (result_obj.contains("pager")) {
                     pager_cmd = result_obj["pager"].cast<std::string>();
                 }
-                // Robust Cleanup Construction: (cat f && rm f) | pager
-                std::string cmd = "(cat \"" + data + "\" && rm \"" + data + "\") | " + pager_cmd;
                 
-                // Clear the current command line visually
-                const char* clear_line = "\x15"; 
-                write(pty_.get_master_fd(), clear_line, 1);
+                std::string file_arg = "\"" + data + "\"";
+                std::string cmd;
                 
-                // Inject the constructed command into the shell
-                write(pty_.get_master_fd(), cmd.c_str(), cmd.size());
+                // For remote sessions, check if less is available (offers to install if not)
+                if (is_remote_session_) {
+                    bool has_less = check_and_offer_less_install();
+                    if (has_less) {
+                        // Use less with cat fallback
+                        std::string polyfill = "{ " + pager_cmd + " " + file_arg + " 2>/dev/null || cat " + file_arg + "; }";
+                        cmd = polyfill + "; rm -f " + file_arg;
+                    } else {
+                        // No less, just cat the output
+                        cmd = "cat " + file_arg + "; rm -f " + file_arg;
+                    }
+                } else {
+                    // Local session: less should be available
+                    std::string polyfill = "{ " + pager_cmd + " " + file_arg + " 2>/dev/null || cat " + file_arg + "; }";
+                    cmd = polyfill + "; rm -f " + file_arg;
+                }
+                
+                // === VISUAL SEPARATION ===
+                // The user's typed command (:db ...) is visible on screen.
+                // We'll use ANSI escape to clear the current line and move cursor up
+                // after the shell echoes our command.
+                
+                // === REMOTE INJECTION ===
+                // Use subshell to:
+                // 1. Clear the line with ANSI (hides echo of cat command)
+                // 2. Run the pager command
+                // 3. Leading space prevents history pollution (HISTCONTROL=ignorespace)
+                // The \033[2K clears the current line, \033[A moves up one line
+                std::string wrapped_cmd = "printf '\\033[A\\033[2K'; " + cmd;
+                std::string full_inject = "\x15 " + wrapped_cmd + "\n";
+                write(pty_.get_master_fd(), full_inject.c_str(), full_inject.size());
             }
             
         } catch (const std::exception& e) {
@@ -2218,4 +2425,28 @@ namespace dais::core {
             remote_db_deployed_ = true;
         }
     }
+
+    bool Engine::check_and_offer_less_install() {
+        // Only check once per session
+        if (less_checked_) {
+            return less_available_;
+        }
+        less_checked_ = true;
+
+        // Check if less is available
+        std::string check_result = execute_remote_command("command -v less >/dev/null 2>&1 && echo LESS_OK || echo LESS_MISSING", 2000);
+        
+        if (check_result.find("LESS_OK") != std::string::npos) {
+            less_available_ = true;
+            return true;
+        }
+
+        // Less is not available - show one-time info message (non-interactive)
+        std::cout << "\r\n[" << handlers::Theme::LOGO << "DB" << handlers::Theme::RESET 
+                  << "] 'less' pager not found. Using raw output. Install 'less' for pagination.\r\n" << std::flush;
+        
+        less_available_ = false;
+        return false;
+    }
 }
+
