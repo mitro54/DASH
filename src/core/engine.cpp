@@ -884,7 +884,7 @@ namespace dais::core {
                                             sort_cfg.dirs_first = config_.ls_dirs_first;
                                             sort_cfg.flow = config_.ls_flow;
                                             
-                                            std::string rendered = handlers::render_remote_ls(json_out, formats, sort_cfg);
+                                            std::string rendered = handlers::render_remote_ls(json_out, formats, sort_cfg, config_.ls_padding);
                                             
                                             if (!rendered.empty()) {
                                                 // Clear line and print grid
@@ -1424,7 +1424,7 @@ namespace dais::core {
             sort_cfg.dirs_first = config_.ls_dirs_first;
             sort_cfg.flow = config_.ls_flow;
             
-            std::string output = handlers::render_remote_ls(json_out, formats, sort_cfg);
+            std::string output = handlers::render_remote_ls(json_out, formats, sort_cfg, config_.ls_padding);
             
             if (!output.empty()) {
                 write(STDOUT_FILENO, "\r\n", 2);

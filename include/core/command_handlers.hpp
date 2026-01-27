@@ -582,7 +582,8 @@ namespace dais::core::handlers {
     inline std::string render_remote_ls(
         const std::string& json_output,
         const LSFormats& formats,
-        const LSSortConfig& sort_cfg
+        const LSSortConfig& sort_cfg,
+        int padding
     ) {
         // GridItem structure 
         struct GridItem {
@@ -692,8 +693,8 @@ namespace dais::core::handlers {
             max_possible_padding = safe_term_width - max_len - safety_margin;
         }
 
-        // We use default padding 4 for remote to keep it simple or pass it in later
-        int effective_padding = 4; 
+        // Use user-configured padding
+        int effective_padding = padding; 
         effective_padding = std::min(effective_padding, static_cast<int>(max_possible_padding));
         
         size_t col_width = max_len + effective_padding;
