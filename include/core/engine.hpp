@@ -74,10 +74,40 @@ namespace dais::core {
 
     class Engine {
     public:
+        // --- CONSTANTS ---
+        static constexpr char kCtrlU = '\x15';     ///< Clear Line
+        static constexpr char kCtrlC = '\x03';     ///< Interrupt
+        static constexpr char kCtrlA = '\x01';     ///< Start of Line
+        static constexpr char kCtrlK = '\x0b';     ///< Kill to End of Line
+        static constexpr char kBell  = '\x07';     ///< Bell / Sentinel Marker
+        static constexpr char kEsc   = '\x1b';     ///< Escape Character
+
+        /**
+         * @brief Constructs the DAIS Engine, detecting the shell environment.
+         */
         Engine();
+
+        /**
+         * @brief Destructor. Ensures the child PTY process is terminated gracefully.
+         */
         ~Engine();
+
+        /**
+         * @brief Main execution loop.
+         * Blocks until the session ends (user types :q or shell exits).
+         */
         void run();
+
+        /**
+         * @brief Scans a directory for Python scripts and loads them as modules.
+         * @param path Absolute or relative path to the scripts folder.
+         */
         void load_extensions(const std::string& path);
+
+        /**
+         * @brief Loads runtime configuration from a config.py file.
+         * @param path Absolute path to config.py.
+         */
         void load_configuration(const std::string& path);
         
         // Helper to allow main.cpp to resize window
@@ -101,12 +131,38 @@ namespace dais::core {
         
         // Active command being intercepted (protected by state_mutex_)
         std::string current_command_;
+
+        /**
+         * @brief Background thread: Reads PTY master -> Writes to Local Stdout.
+         * Handles ANSI parsing, state synchronization, and output capture.
+         */
+        void forward_shell_output();
+
+        /**
+         * @brief Main thread: Reads Local Stdin -> Writes to PTY master.
+         * Handles user input, command interception (ls, :db), history navigation,
+         * and tab completion recovery.
+         */
+        void process_user_input();
         
+        /**
+         * @brief Recovers the user's typed command from the raw shell output buffer.
+         * 
+         * Simulates a minimal terminal (handling backspaces, carriage returns, and ANSI codes)
+         * to reconstruct exactly what is visible on the screen, extracting the command
+         * following the shell prompt.
+         * 
+         * @param raw_buffer The raw PTY output buffer containing prompts, echoes, and control codes.
+         * @return std::string The cleaned, reconstructed command string.
+         */
+        std::string recover_cmd_from_buffer(const std::string& raw_buffer);
+
         // --- THREAD SAFETY ---
         std::mutex state_mutex_;
 
         // --- PASS-THROUGH MODE STATE (only accessed from forward_shell_output thread) ---
-        std::string prompt_buffer_;            ///< Last ~100 chars for prompt detection
+        mutable std::mutex prompt_mutex_;      ///< Protects prompt_buffer_
+        std::string prompt_buffer_;            ///< Last ~1024 chars for prompt/command detection
         int pass_through_esc_state_ = 0;       ///< ANSI escape sequence state machine (0=normal)
         
         // Singleton thread pool for parallel file analysis (used by ls handler)
@@ -118,11 +174,7 @@ namespace dais::core {
         py::scoped_interpreter guard{}; 
         std::vector<py::module_> loaded_plugins_;
 
-        // The background thread that reads from Bash -> Screen
-        void forward_shell_output();
 
-        // The main loop that reads User Keyboard -> Bash
-        void process_user_input();
 
         void trigger_python_hook(const std::string& hook_name, const std::string& data);
 
@@ -205,6 +257,6 @@ namespace dais::core {
          * @brief Handles the complex logic of intercepting and executing 'ls' on a remote host.
          * Incorporates agent deployment, fallback to Python, and output rendering.
          */
-        void handle_remote_ls(const handlers::LSArgs& ls_args);
+        void handle_remote_ls(const handlers::LSArgs& ls_args, const std::string& original_cmd);
     };
 }

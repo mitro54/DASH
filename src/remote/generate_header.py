@@ -1,7 +1,21 @@
+"""
+Script to generate C++ headers from binary files.
+Used to embed the remote agent binaries directly into the DAIS engine execution.
+"""
 import sys
 import os
 
 def file_to_hex(path, var_name):
+    """
+    Reads a binary file and converts it into a C++ byte array definition.
+    
+    Args:
+        path (str): Path to the binary file.
+        var_name (str): Name of the C++ variable to generate.
+        
+    Returns:
+        str: A string containing the C++ code for the byte array and its size.
+    """
     if not os.path.exists(path):
         print(f"Warning: {path} not found. Using empty placeholder.")
         return f"    inline const unsigned char {var_name}[] = {{ 0x00 }};\n    inline const size_t SIZE_{var_name.replace('AGENT_', '')} = 0;"
