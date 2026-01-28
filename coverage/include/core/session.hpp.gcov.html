@@ -37,7 +37,7 @@
           </tr>
           <tr>
             <td class="headerItem">Test Date:</td>
-            <td class="headerValue">2026-01-26 16:19:49</td>
+            <td class="headerValue">2026-01-28 00:35:36</td>
             <td></td>
             <td class="headerItem">Functions:</td>
             <td class="headerCovTableEntryHi">100.0&nbsp;%</td>
@@ -82,51 +82,58 @@
 <span id="L4"><span class="lineNum">       4</span>                 :             : #include &lt;unistd.h&gt;</span>
 <span id="L5"><span class="lineNum">       5</span>                 :             : #include &lt;sys/ioctl.h&gt;</span>
 <span id="L6"><span class="lineNum">       6</span>                 :             : #include &lt;cstdint&gt;</span>
-<span id="L7"><span class="lineNum">       7</span>                 :             : </span>
-<span id="L8"><span class="lineNum">       8</span>                 :             : namespace dais::core {</span>
-<span id="L9"><span class="lineNum">       9</span>                 :             : </span>
-<span id="L10"><span class="lineNum">      10</span>                 :             :     class PTYSession {</span>
-<span id="L11"><span class="lineNum">      11</span>                 :             :     public:</span>
-<span id="L12"><span class="lineNum">      12</span>                 :             :         PTYSession();</span>
-<span id="L13"><span class="lineNum">      13</span>                 :             :         ~PTYSession();</span>
-<span id="L14"><span class="lineNum">      14</span>                 :             : </span>
-<span id="L15"><span class="lineNum">      15</span>                 :             :         // Starts the PTY and forks the child process</span>
-<span id="L16"><span class="lineNum">      16</span>                 :             :         bool start();</span>
-<span id="L17"><span class="lineNum">      17</span>                 :             :         </span>
-<span id="L18"><span class="lineNum">      18</span>                 :             :         // Clean cleanup of file descriptors and processes</span>
-<span id="L19"><span class="lineNum">      19</span>                 :             :         void stop();</span>
-<span id="L20"><span class="lineNum">      20</span>                 :             : </span>
-<span id="L21"><span class="lineNum">      21</span>                 :             :         // Updates the PTY size (rows/cols) to match the physical window.</span>
-<span id="L22"><span class="lineNum">      22</span>                 :             :         // Handles &quot;Safe Width&quot; calculation for the logo injection.</span>
-<span id="L23"><span class="lineNum">      23</span>                 :             :         void resize(int rows, int cols, bool show_logo);</span>
-<span id="L24"><span class="lineNum">      24</span>                 :             : </span>
-<span id="L25"><span class="lineNum">      25</span>                 :             :         // Getters</span>
-<span id="L26"><span class="lineNum">      26</span>                 :<span class="tlaGNC tlaBgGNC">         115 :         [[nodiscard]] int get_master_fd() const { return master_fd_; }</span></span>
-<span id="L27"><span class="lineNum">      27</span>                 :<span class="tlaGNC">          41 :         [[nodiscard]] pid_t get_child_pid() const { return child_pid_; }</span></span>
-<span id="L28"><span class="lineNum">      28</span>                 :             :         </span>
-<span id="L29"><span class="lineNum">      29</span>                 :             :         /**</span>
-<span id="L30"><span class="lineNum">      30</span>                 :             :          * @brief Checks if the shell is idle (at prompt, no foreground child).</span>
-<span id="L31"><span class="lineNum">      31</span>                 :             :          * Uses tcgetpgrp to get the foreground process group of the PTY.</span>
-<span id="L32"><span class="lineNum">      32</span>                 :             :          * If it matches the shell's PID, no child (vim, python, etc.) is running.</span>
-<span id="L33"><span class="lineNum">      33</span>                 :             :          * @return true if shell is idle, false if a child process is in foreground</span>
-<span id="L34"><span class="lineNum">      34</span>                 :             :          */</span>
-<span id="L35"><span class="lineNum">      35</span>                 :<span class="tlaGNC">        2135 :         [[nodiscard]] bool is_shell_idle() const {</span></span>
-<span id="L36"><span class="lineNum">      36</span>                 :<span class="tlaGNC">        2135 :             pid_t fg_pgrp = tcgetpgrp(master_fd_);</span></span>
-<span id="L37"><span class="lineNum">      37</span>                 :             :             // If fg_pgrp matches the shell's process group, shell is idle</span>
-<span id="L38"><span class="lineNum">      38</span>                 :             :             // getpgid(child_pid_) gets the shell's process group</span>
-<span id="L39"><span class="lineNum">      39</span>                 :<span class="tlaGNC">        2135 :             return fg_pgrp == getpgid(child_pid_);</span></span>
-<span id="L40"><span class="lineNum">      40</span>                 :             :         }</span>
-<span id="L41"><span class="lineNum">      41</span>                 :             : </span>
-<span id="L42"><span class="lineNum">      42</span>                 :             :     private:</span>
-<span id="L43"><span class="lineNum">      43</span>                 :             :         int master_fd_;</span>
-<span id="L44"><span class="lineNum">      44</span>                 :             :         pid_t child_pid_;</span>
-<span id="L45"><span class="lineNum">      45</span>                 :             :         struct termios orig_term_; // To restore terminal settings on exit</span>
-<span id="L46"><span class="lineNum">      46</span>                 :             : </span>
-<span id="L47"><span class="lineNum">      47</span>                 :             :         void set_raw_mode();</span>
-<span id="L48"><span class="lineNum">      48</span>                 :             :         void restore_term_mode();</span>
-<span id="L49"><span class="lineNum">      49</span>                 :             :     };</span>
-<span id="L50"><span class="lineNum">      50</span>                 :             : </span>
-<span id="L51"><span class="lineNum">      51</span>                 :             : }</span>
+<span id="L7"><span class="lineNum">       7</span>                 :             : #include &lt;string&gt;</span>
+<span id="L8"><span class="lineNum">       8</span>                 :             : </span>
+<span id="L9"><span class="lineNum">       9</span>                 :             : namespace dais::core {</span>
+<span id="L10"><span class="lineNum">      10</span>                 :             : </span>
+<span id="L11"><span class="lineNum">      11</span>                 :             :     class PTYSession {</span>
+<span id="L12"><span class="lineNum">      12</span>                 :             :     public:</span>
+<span id="L13"><span class="lineNum">      13</span>                 :             :         PTYSession();</span>
+<span id="L14"><span class="lineNum">      14</span>                 :             :         ~PTYSession();</span>
+<span id="L15"><span class="lineNum">      15</span>                 :             : </span>
+<span id="L16"><span class="lineNum">      16</span>                 :             :         // Starts the PTY and forks the child process</span>
+<span id="L17"><span class="lineNum">      17</span>                 :             :         bool start();</span>
+<span id="L18"><span class="lineNum">      18</span>                 :             :         </span>
+<span id="L19"><span class="lineNum">      19</span>                 :             :         // Clean cleanup of file descriptors and processes</span>
+<span id="L20"><span class="lineNum">      20</span>                 :             :         void stop();</span>
+<span id="L21"><span class="lineNum">      21</span>                 :             : </span>
+<span id="L22"><span class="lineNum">      22</span>                 :             :         // Updates the PTY size (rows/cols) to match the physical window.</span>
+<span id="L23"><span class="lineNum">      23</span>                 :             :         // Handles &quot;Safe Width&quot; calculation for the logo injection.</span>
+<span id="L24"><span class="lineNum">      24</span>                 :             :         void resize(int rows, int cols, bool show_logo);</span>
+<span id="L25"><span class="lineNum">      25</span>                 :             : </span>
+<span id="L26"><span class="lineNum">      26</span>                 :             :         // Getters</span>
+<span id="L27"><span class="lineNum">      27</span>                 :<span class="tlaGNC tlaBgGNC">         110 :         [[nodiscard]] int get_master_fd() const { return master_fd_; }</span></span>
+<span id="L28"><span class="lineNum">      28</span>                 :<span class="tlaGNC">          41 :         [[nodiscard]] pid_t get_child_pid() const { return child_pid_; }</span></span>
+<span id="L29"><span class="lineNum">      29</span>                 :             :         </span>
+<span id="L30"><span class="lineNum">      30</span>                 :             :         /**</span>
+<span id="L31"><span class="lineNum">      31</span>                 :             :          * @brief Checks if the shell is idle (at prompt, no foreground child).</span>
+<span id="L32"><span class="lineNum">      32</span>                 :             :          * Uses tcgetpgrp to get the foreground process group of the PTY.</span>
+<span id="L33"><span class="lineNum">      33</span>                 :             :          * If it matches the shell's PID, no child (vim, python, etc.) is running.</span>
+<span id="L34"><span class="lineNum">      34</span>                 :             :          * @return true if shell is idle, false if a child process is in foreground</span>
+<span id="L35"><span class="lineNum">      35</span>                 :             :          */</span>
+<span id="L36"><span class="lineNum">      36</span>                 :<span class="tlaGNC">        1529 :         [[nodiscard]] bool is_shell_idle() const {</span></span>
+<span id="L37"><span class="lineNum">      37</span>                 :<span class="tlaGNC">        1529 :             pid_t fg_pgrp = tcgetpgrp(master_fd_);</span></span>
+<span id="L38"><span class="lineNum">      38</span>                 :             :             // If fg_pgrp matches the shell's process group, shell is idle</span>
+<span id="L39"><span class="lineNum">      39</span>                 :             :             // getpgid(child_pid_) gets the shell's process group</span>
+<span id="L40"><span class="lineNum">      40</span>                 :<span class="tlaGNC">        1529 :             return fg_pgrp == getpgid(child_pid_);</span></span>
+<span id="L41"><span class="lineNum">      41</span>                 :             :         }</span>
+<span id="L42"><span class="lineNum">      42</span>                 :             : </span>
+<span id="L43"><span class="lineNum">      43</span>                 :             :         /**</span>
+<span id="L44"><span class="lineNum">      44</span>                 :             :          * @brief Retrieves the name of the foreground process (e.g., &quot;vim&quot;, &quot;python3&quot;, &quot;ssh&quot;).</span>
+<span id="L45"><span class="lineNum">      45</span>                 :             :          * Useful for making engine decisions based on what the user is running.</span>
+<span id="L46"><span class="lineNum">      46</span>                 :             :          */</span>
+<span id="L47"><span class="lineNum">      47</span>                 :             :         std::string get_foreground_process_name();</span>
+<span id="L48"><span class="lineNum">      48</span>                 :             : </span>
+<span id="L49"><span class="lineNum">      49</span>                 :             :     private:</span>
+<span id="L50"><span class="lineNum">      50</span>                 :             :         int master_fd_;</span>
+<span id="L51"><span class="lineNum">      51</span>                 :             :         pid_t child_pid_;</span>
+<span id="L52"><span class="lineNum">      52</span>                 :             :         struct termios orig_term_; // To restore terminal settings on exit</span>
+<span id="L53"><span class="lineNum">      53</span>                 :             : </span>
+<span id="L54"><span class="lineNum">      54</span>                 :             :         void set_raw_mode();</span>
+<span id="L55"><span class="lineNum">      55</span>                 :             :         void restore_term_mode();</span>
+<span id="L56"><span class="lineNum">      56</span>                 :             :     };</span>
+<span id="L57"><span class="lineNum">      57</span>                 :             : </span>
+<span id="L58"><span class="lineNum">      58</span>                 :             : }</span>
         </pre>
               </td>
             </tr>
