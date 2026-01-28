@@ -981,8 +981,7 @@ namespace dais::core {
                                 cmd_accumulator.clear();
                                 {
                                     std::lock_guard<std::mutex> lock(prompt_mutex_);
-                                    // Don't clear prompt_buffer_ here - it prevents recovery of next command
-                                    // prompt_buffer_.clear(); 
+                                    // Don't clear prompt_buffer_ here, handled naturally by newlines
                                 }
                                 // NOTE: Don't send extra newline here - the injected command already has one
                                 // Sending another causes double prompts
@@ -1614,7 +1613,6 @@ namespace dais::core {
         // Clear the prompt buffer memory so we don't "recover" the 'ls' we just ran
         {
             std::lock_guard<std::mutex> lock(prompt_mutex_);
-            // prompt_buffer_.clear(); // Don't wipe buffer explicitly
             at_line_start_ = true;
         }
 
@@ -1624,6 +1622,17 @@ namespace dais::core {
         write(pty_.get_master_fd(), "\n", 1);
     }
 
+    /**
+     * @brief Recovers a clean command string from the prompt buffer by simulating terminal behavior.
+     * 
+     * Handles ANSI escape codes, cursor movements (backspace, carriage return, CSI C/D),
+     * and line clearing (CSI 1K/2K) to reconstruct what is visually present on the line.
+     * This is crucial for intercepting commands from shell history where the input
+     * comes from the shell's echo rather than user keystrokes.
+     * 
+     * @param buffer The raw PTY output buffer containing prompts, commands, and ANSI codes.
+     * @return The cleaned command string, or empty if prompt not found.
+     */
     std::string Engine::recover_cmd_from_buffer(const std::string& buffer) {
         // 1. Terminal Simulation (Cursor & Overwrite)
         // We reconstruct the line by simulating cursor movements and overwrites.

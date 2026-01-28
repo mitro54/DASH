@@ -148,9 +148,9 @@ namespace dais::core {
         /**
          * @brief Recovers the user's typed command from the raw shell output buffer.
          * 
-         * Simulates a minimal terminal (handling backspaces, carriage returns, and ANSI codes)
-         * to reconstruct exactly what is visible on the screen, extracting the command
-         * following the shell prompt.
+         * Simulates a robust terminal (handling ANSI color codes, cursor movements, and line clearing)
+         * to reconstruct exactly what is visible on the screen.
+         * Crucial for intercepting commands from shell history where input is echoed by the shell.
          * 
          * @param raw_buffer The raw PTY output buffer containing prompts, echoes, and control codes.
          * @return std::string The cleaned, reconstructed command string.
